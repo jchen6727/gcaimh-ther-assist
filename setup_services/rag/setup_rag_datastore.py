@@ -27,7 +27,7 @@ import requests
 
 # Configuration
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION = "global"
+LOCATION = "us-central1"
 DATASTORE_ID = "ebt-corpus"
 DISPLAY_NAME = "EBT Therapy Manuals Corpus"
 
