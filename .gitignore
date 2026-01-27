@@ -117,5 +117,8 @@ terraform.rc
 # Uncomment the line below if you want to ignore planout files.
 # planout
 
-# Ignore all backup files
+# Ignore all backup .bak files
 *.bak
+
+# Ignore all gcloud.json credentialing files across directories
+**/gcloud.json
