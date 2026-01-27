@@ -26,8 +26,8 @@ from google.auth.transport.requests import Request
 import requests
 
 # Configuration
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION = "us-central1"
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", default()[1])
+LOCATION = "us" # removed hardcode
 DATASTORE_ID = "ebt-corpus"
 DISPLAY_NAME = "EBT Therapy Manuals Corpus"
 
@@ -37,10 +37,10 @@ def get_access_token():
     credentials.refresh(Request())
     return credentials.token
 
-def create_datastore():
+def create_datastore(timeout:int):
     """Create a Vertex AI Search datastore with document chunking enabled."""
     
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores?dataStoreId={DATASTORE_ID}"
+    url = f"https://us-discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/us/collections/default_collection/dataStores?dataStoreId={DATASTORE_ID}"
     
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
@@ -86,7 +86,7 @@ def create_datastore():
     
     print(f"Creating datastore '{DATASTORE_ID}' with layout-aware chunking...")
     
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(url, headers=headers, json=data, timeout=timeout)
     
     if response.status_code == 200:
         print(f"✅ Datastore '{DATASTORE_ID}' created successfully!")
@@ -101,8 +101,8 @@ def create_datastore():
 
 def get_datastore():
     """Get existing datastore details."""
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
-    
+    #url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
+    url = f"https://us-discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/us/collections/default_collection/dataStores/{DATASTORE_ID}"
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
         "X-Goog-User-Project": PROJECT_ID
@@ -231,7 +231,7 @@ def import_documents_to_datastore(bucket_name):
     print(f"✅ Created metadata file with {len(corpus_files)} documents")
     
     # Now import using the metadata file
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}/branches/0/documents:import"
+    url = f"https://us-discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/us/collections/default_collection/dataStores/{DATASTORE_ID}/branches/0/documents:import"
     
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
@@ -340,7 +340,9 @@ def main():
     
     try:
         # Create datastore with chunking enabled
-        datastore = create_datastore()
+        datastore = create_datastore(
+            timeout=600.0 # in case of "cold start"
+        )
         
         # Create GCS bucket
         bucket_name = create_gcs_bucket()
