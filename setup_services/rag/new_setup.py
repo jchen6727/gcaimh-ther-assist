@@ -11,16 +11,13 @@ import json
 from google.api_core import exceptions
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import storage
-
+from google.auth import default
 # --- Configuration ---
 # Attempt to get Project ID from environment, otherwise fall back to gcloud default
 try:
     PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
     if not PROJECT_ID:
-        import subprocess
-        PROJECT_ID = subprocess.check_output(
-            ["gcloud", "config", "get-value", "project"], text=True
-        ).strip()
+        PROJECT_ID = default()[1]
 except Exception:
     print("❌ Could not determine Google Cloud project. Please set GOOGLE_CLOUD_PROJECT environment variable.")
     exit(1)
@@ -36,7 +33,8 @@ def create_datastore():
     """Create a Vertex AI Search datastore using the Python SDK."""
     parent = f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection"
     
-    client = discoveryengine.DataStoreServiceClient()
+    client_options = {"api_endpoint": f"{LOCATION}-discoveryengine.googleapis.com"}
+    client = discoveryengine.DataStoreServiceClient(client_options=client_options)
     
     data_store = discoveryengine.DataStore(
         display_name=DISPLAY_NAME,
@@ -147,11 +145,12 @@ def upload_corpus_to_gcs():
     return files_uploaded > 0 and files_failed == 0
 
 def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
-    """Import documents from GCS to the datastore using the SDK."""
-    client = discoveryengine.DocumentServiceClient()
+    """Import documents from GCS to the datastore using the SDK.""" # need a longer timeout
+    client_options = {"api_endpoint": f"{LOCATION}-discoveryengine.googleapis.com"}
+    client = discoveryengine.DocumentServiceClient(client_options=client_options)
     
     gcs_uri = f"gs://{BUCKET_NAME}/corpus/*"
-
+    error_uri = f"gs://{BUCKET_NAME}/import_errors"
     request = discoveryengine.ImportDocumentsRequest(
         parent=f"{datastore_name}/branches/0",
         gcs_source=discoveryengine.GcsSource(
@@ -159,6 +158,9 @@ def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
             data_schema="content" # `content` schema infers from files
         ),
         reconciliation_mode=discoveryengine.ImportDocumentsRequest.ReconciliationMode.INCREMENTAL,
+        error_config=discoveryengine.ImportErrorConfig(
+            gcs_prefix=error_uri,
+        )
     )
 
     print(f"Importing documents from '{gcs_uri}' to datastore...")
@@ -167,10 +169,10 @@ def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
         print(f"⏳ Waiting for import operation to complete... (Timeout: {timeout}s)")
         
         response = operation.result(timeout=timeout)
-        
+        metadata = operation.metadata
         # Process the response
-        success_count = response.success_count
-        failure_count = response.failure_count
+        success_count = metadata.success_count
+        failure_count = metadata.failure_count
 
         print("\n✅ Import operation finished!")
         print(f"  📊 Import Statistics:")
