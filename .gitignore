@@ -33,6 +33,9 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
+# checkpointing
+**/transcript_upload_progress.json
+
 # Test coverage
 coverage/
 *.lcov

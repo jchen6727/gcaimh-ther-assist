@@ -15,9 +15,7 @@ from google.auth import default
 # --- Configuration ---
 # Attempt to get Project ID from environment, otherwise fall back to gcloud default
 try:
-    PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "")
-    if not PROJECT_ID:
-        PROJECT_ID = default()[1]
+    PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", default()[1])
 except Exception:
     print("❌ Could not determine Google Cloud project. Please set GOOGLE_CLOUD_PROJECT environment variable.")
     exit(1)
@@ -65,15 +63,19 @@ def create_datastore():
         ),
     )
 
-    request = discoveryengine.CreateDataStoreRequest(
-        parent=parent,
-        data_store=data_store,
-        data_store_id=DATASTORE_ID,
-    )
+    #request = discoveryengine.CreateDataStoreRequest(
+    #    parent=parent,
+    #    data_store=data_store,
+    #    data_store_id=DATASTORE_ID,
+    #)
 
     print(f"Creating datastore '{DATASTORE_ID}' with layout-aware chunking...")
     try:
-        operation = client.create_data_store(request=request)
+        operation = client.create_data_store(
+            # request=request
+            parent=parent,
+            data_store=data_store,
+            data_store_id=DATASTORE_ID, )
         print("⏳ Waiting for datastore creation to complete...")
         response = operation.result()
         print(f"✅ Datastore '{response.name}' created successfully!")

@@ -17,8 +17,13 @@ from typing import Set, Dict, Any
 from google.cloud import discoveryengine_v1 as discoveryengine
 
 # Configuration
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION = "global"
+try:
+    PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", default()[1])
+except Exception:
+    print("❌ Could not determine Google Cloud project. Please set GOOGLE_CLOUD_PROJECT environment variable.")
+    exit(1)
+LOCATION = "us"
+
 DATASTORE_ID = "transcript-patterns"
 DISPLAY_NAME = "Clinical Therapy Transcripts"
 
@@ -92,11 +97,14 @@ def get_access_token():
     credentials.refresh(Request())
     return credentials.token
 
-def create_datastore(client: discoveryengine.DataStoreServiceClient):
+def create_datastore():
     """Create a Vertex AI Search datastore with dialogue-aware chunking."""
     
     parent = f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection"
-    
+
+    client_options = {"api_endpoint": f"{LOCATION}-discoveryengine.googleapis.com"}
+    client = discoveryengine.DataStoreServiceClient(client_options=client_options)
+
     # Configure datastore with dialogue-aware chunking
     data_store = discoveryengine.DataStore(
         display_name=DISPLAY_NAME,
@@ -464,11 +472,13 @@ def create_pattern_library(bucket_name):
     print("✅ Created and uploaded therapeutic pattern library")
     return True
 
-def import_documents_to_datastore(client: discoveryengine.DocumentServiceClient, bucket_name: str):
+def import_documents_to_datastore(bucket_name: str):
     """Import documents from GCS to the datastore."""
     
     parent = f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}/branches/0"
-    
+    client_options = {"api_endpoint": f"{LOCATION}-discoveryengine.googleapis.com"}
+    client = discoveryengine.DocumentServiceClient(client_options=client_options)
+
     # Configure import from GCS
     request = discoveryengine.ImportDocumentsRequest(
         parent=parent,
@@ -524,7 +534,7 @@ def main():
     
     try:
         # Create datastore with dialogue-aware chunking
-        datastore = create_datastore(datastore_client)
+        datastore = create_datastore()
         
         # Create GCS bucket
         bucket_name = create_gcs_bucket()
@@ -535,7 +545,7 @@ def main():
             create_pattern_library(bucket_name)
             
             # Import documents to datastore
-            operation = import_documents_to_datastore(document_client, bucket_name)
+            operation = import_documents_to_datastore(bucket_name)
             
             if operation:
                 print("⏳ Waiting for import to complete...")
