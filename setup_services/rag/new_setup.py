@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Script to programmatically create a Vertex AI Search datastore with document chunking for RAG,
-using the modern Python SDK. This datastore is configured to process EBT therapy
-manuals with layout-aware chunking.
+using the modern Python SDK. This version demonstrates using a metadata.jsonl file
+to include custom structData for each document.
 """
 
 import os
@@ -12,6 +12,7 @@ from google.api_core import exceptions
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import storage
 from google.auth import default
+
 # --- Configuration ---
 # Attempt to get Project ID from environment, otherwise fall back to gcloud default
 try:
@@ -21,10 +22,11 @@ except Exception:
     exit(1)
 
 LOCATION = "us"  # Global location for Discovery Engine
-DATASTORE_ID = "ebt-corpus-sdk" # Using a new name to avoid conflicts
-DISPLAY_NAME = "EBT Therapy Manuals Corpus (SDK)"
+DATASTORE_ID = "ebt-corpus-sdk-metadata" # Using a new name to avoid conflicts
+DISPLAY_NAME = "EBT Therapy Manuals Corpus (SDK with Metadata)"
 BUCKET_NAME = f"{PROJECT_ID}-ebt-corpus"
 CORPUS_DIR = "corpus"
+METADATA_FILE_NAME = "import_metadata.jsonl"
 
 
 def create_datastore():
@@ -63,19 +65,13 @@ def create_datastore():
         ),
     )
 
-    #request = discoveryengine.CreateDataStoreRequest(
-    #    parent=parent,
-    #    data_store=data_store,
-    #    data_store_id=DATASTORE_ID,
-    #)
-
     print(f"Creating datastore '{DATASTORE_ID}' with layout-aware chunking...")
     try:
         operation = client.create_data_store(
-            # request=request
             parent=parent,
             data_store=data_store,
-            data_store_id=DATASTORE_ID, )
+            data_store_id=DATASTORE_ID,
+        )
         print("⏳ Waiting for datastore creation to complete...")
         response = operation.result()
         print(f"✅ Datastore '{response.name}' created successfully!")
@@ -146,18 +142,77 @@ def upload_corpus_to_gcs():
         print(f"  ❌ Failed to upload: {files_failed}")
     return files_uploaded > 0 and files_failed == 0
 
+def create_metadata_jsonl():
+    """
+    Creates a metadata.jsonl file in GCS for batch import.
+    This file includes custom structData for each document.
+    """
+    print("\n📄 Creating metadata file for import...")
+    client = storage.Client(project=PROJECT_ID)
+    bucket = client.bucket(BUCKET_NAME)
+
+    corpus_blobs = list(bucket.list_blobs(prefix=f"{CORPUS_DIR}/"))
+    if not corpus_blobs:
+        print(f"❌ No corpus files found in GCS bucket '{BUCKET_NAME}' under prefix '{CORPUS_DIR}/'.")
+        return False
+
+    metadata_lines = []
+    for blob in corpus_blobs:
+        if not blob.name.endswith('/'): # Ignore "folders"
+            file_path = blob.name
+            filename = os.path.basename(file_path)
+            doc_id = filename.replace('.', '_').replace(' ', '_')
+            
+            # Determine MIME type from extension
+            if file_path.endswith('.pdf'):
+                mime_type = "application/pdf"
+            elif file_path.endswith('.docx'):
+                mime_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            else:
+                mime_type = "text/plain"
+
+            metadata = {
+                "id": doc_id,
+                "structData": {
+                    "title": filename,
+                    "source": "EBT Manual",
+                    "type": "therapy_manual"
+                },
+                "content": {
+                    "uri": f"gs://{BUCKET_NAME}/{file_path}",
+                    "mimeType": mime_type
+                }
+            }
+            metadata_lines.append(json.dumps(metadata))
+
+    if not metadata_lines:
+        print("❌ No valid documents found to create metadata for.")
+        return False
+        
+    # Upload metadata file to GCS
+    metadata_content = '\n'.join(metadata_lines)
+    metadata_blob = bucket.blob(METADATA_FILE_NAME)
+    metadata_blob.upload_from_string(metadata_content)
+    print(f"✅ Created metadata file '{METADATA_FILE_NAME}' with {len(metadata_lines)} documents.")
+    return True
+
+
 def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
-    """Import documents from GCS to the datastore using the SDK.""" # need a longer timeout
+    """
+    Import documents from GCS to the datastore using a metadata.jsonl file
+    and the 'document' schema.
+    """
     client_options = {"api_endpoint": f"{LOCATION}-discoveryengine.googleapis.com"}
     client = discoveryengine.DocumentServiceClient(client_options=client_options)
     
-    gcs_uri = f"gs://{BUCKET_NAME}/corpus/*"
+    gcs_uri = f"gs://{BUCKET_NAME}/{METADATA_FILE_NAME}"
     error_uri = f"gs://{BUCKET_NAME}/import_errors"
+    
     request = discoveryengine.ImportDocumentsRequest(
         parent=f"{datastore_name}/branches/0",
         gcs_source=discoveryengine.GcsSource(
             input_uris=[gcs_uri],
-            data_schema="content" # `content` schema infers from files
+            data_schema="document"  # Use 'document' schema for JSONL metadata
         ),
         reconciliation_mode=discoveryengine.ImportDocumentsRequest.ReconciliationMode.INCREMENTAL,
         error_config=discoveryengine.ImportErrorConfig(
@@ -165,14 +220,14 @@ def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
         )
     )
 
-    print(f"Importing documents from '{gcs_uri}' to datastore...")
+    print(f"\n📤 Importing documents using metadata file '{gcs_uri}'...")
     try:
         operation = client.import_documents(request=request)
         print(f"⏳ Waiting for import operation to complete... (Timeout: {timeout}s)")
         
-        response = operation.result(timeout=timeout)
-        metadata = operation.metadata
-        # Process the response
+        operation.result(timeout=timeout) # Wait for completion
+        metadata = discoveryengine.ImportDocumentsMetadata(operation.metadata)
+
         success_count = metadata.success_count
         failure_count = metadata.failure_count
 
@@ -182,9 +237,8 @@ def import_documents_to_datastore(datastore_name: str, timeout: int = 600):
         print(f"    - Failure Count: {failure_count}")
 
         if failure_count > 0:
-            print("\n  ⚠️  Warning: Some documents failed to import.")
-            for sample in response.error_samples:
-                print(f"    - Error: {sample.message}")
+            print(f"\n  ⚠️  Warning: {failure_count} documents failed to import.")
+            print(f"     Check the error file in GCS at '{error_uri}' for details.")
             return False
         
         print("\n✅✅✅ All documents imported successfully! ✅✅✅")
@@ -205,17 +259,22 @@ def main():
         create_gcs_bucket()
         
         if upload_corpus_to_gcs():
-            if import_documents_to_datastore(datastore.name):
-                print("\n✨ RAG datastore setup is complete and ready for use! ✨")
-                print("\n📚 Your EBT corpus has been:")
-                print("   ✅ Uploaded to GCS bucket")
-                print("   ✅ Imported into Vertex AI Search")
-                print("   ✅ Configured with layout-aware chunking")
-                
-                print(f"\n🔗 Datastore Path: {datastore.name}")
+            if create_metadata_jsonl(): # Create the metadata file first
+                if import_documents_to_datastore(datastore.name):
+                    print("\n✨ RAG datastore setup is complete and ready for use! ✨")
+                    print("\n📚 Your EBT corpus has been:")
+                    print("   ✅ Uploaded to GCS bucket")
+                    print("   ✅ Described in a metadata.jsonl file with custom structData")
+                    print("   ✅ Imported into Vertex AI Search")
+                    print("   ✅ Configured with layout-aware chunking")
+                    
+                    print(f"\n🔗 Datastore Path: {datastore.name}")
+                else:
+                    print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
+                    print("   Please check the logs above for details on failed documents.")
             else:
-                print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
-                print("   Please check the logs above for details on failed documents.")
+                print("\n❌❌❌ METADATA CREATION FAILED ❌❌❌")
+                print("   Could not create the import_metadata.jsonl file. Aborting.")
         
     except Exception as e:
         print(f"\n❌ An unrecoverable error occurred during setup: {str(e)}")
