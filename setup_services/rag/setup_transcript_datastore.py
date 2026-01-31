@@ -29,7 +29,7 @@ import PyPDF2
 
 # Configuration
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION = "global"
+LOCATION = "us"
 DATASTORE_ID = "transcript-patterns"
 DISPLAY_NAME = "Clinical Therapy Transcripts"
 

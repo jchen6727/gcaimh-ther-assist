@@ -25,6 +25,10 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+nul
+
+# Word temp files
+~$*
 
 # Logs
 *.log
@@ -73,6 +77,9 @@ rag-example/backend/rag/materials/Curriculum/**/*.mp4
 .firebase/*
 .firebaserc
 firebase-config-object.ts
+
+# Netlify
+.netlify/
 
 # Terraform
 # Local .terraform directories

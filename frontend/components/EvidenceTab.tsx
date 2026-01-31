@@ -15,6 +15,7 @@
 import React from 'react';
 import { Box, Paper, Typography } from '@mui/material';
 import { ChatBubbleOutline } from '@mui/icons-material';
+import { Alert } from '../types/types';
 
 const QuoteCard = ({ time, text }: { time: string, text: string }) => (
   <Paper
@@ -38,47 +39,104 @@ const QuoteCard = ({ time, text }: { time: string, text: string }) => (
   </Paper>
 );
 
-const EvidenceTab = () => {
+interface EvidenceTabProps {
+  currentAlert?: Alert | null;
+  sessionDuration?: number;
+}
+
+const EvidenceTab: React.FC<EvidenceTabProps> = ({ currentAlert, sessionDuration = 0 }) => {
+  // Format session time for display
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  if (!currentAlert) {
+    return (
+      <Box sx={{
+        p: 3,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 3,
+        overflow: 'auto',
+        height: '100%',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <Typography variant="h5" sx={{
+          fontWeight: 400,
+          fontSize: '28px',
+          lineHeight: '36px',
+          color: '#444746',
+          textAlign: 'center',
+        }}>
+          Evidence will appear here when alerts are generated during the session.
+        </Typography>
+      </Box>
+    );
+  }
+
   return (
-    <Box sx={{ 
-      p: 3, 
-      display: 'flex', 
-      flexDirection: 'column', 
+    <Box sx={{
+      p: 3,
+      display: 'flex',
+      flexDirection: 'column',
       gap: 3,
       overflow: 'auto',
       height: '100%',
     }}>
+      {/* Alert message as main content */}
       <Typography variant="h5" sx={{
         fontWeight: 400,
         fontSize: '28px',
         lineHeight: '36px',
         color: '#1f1f1f',
       }}>
-        The patient has disclosed suicidal ideation ('thoughts about hurting myself... to make the anxiety stop') and a recent specific incident ('looking at my knife set... had to leave the room').
+        {currentAlert.message}
       </Typography>
-      <Typography variant="h5" sx={{
-        fontWeight: 400,
-        fontSize: '28px',
-        lineHeight: '36px',
-        color: '#1f1f1f',
-      }}>
-        This requires immediate, direct assessment of intent, plan, and means, followed by collaborative safety planning.
-      </Typography>
-      <Box>
-        <Typography variant="overline" sx={{ color: '#444746', fontWeight: 'bold', fontSize: '14px' }}>
-          EVIDENCE
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 2, mt: 1 }}>
-          <QuoteCard 
-            time="02:47" 
-            text={"\"I haven't done anything, but the thoughts are getting stronger. Yesterday I was looking at my knife set in the kitchen and... I had to leave the room.\""} 
-          />
-          <QuoteCard 
-            time="03:01"
-            text='"Sometimes when everything gets too overwhelming, I have thoughts about... hurting myself. Just to make the anxiety stop."'
-          />
+
+      {/* Evidence section */}
+      {currentAlert.evidence && currentAlert.evidence.length > 0 && (
+        <Box>
+          <Typography variant="overline" sx={{ color: '#444746', fontWeight: 'bold', fontSize: '14px' }}>
+            EVIDENCE
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 2, mt: 1, flexWrap: 'wrap' }}>
+            {currentAlert.evidence.map((ev, idx) => (
+              <QuoteCard
+                key={idx}
+                time={currentAlert.timestamp
+                  ? new Date(currentAlert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                  : formatTime(sessionDuration)
+                }
+                text={`"${ev}"`}
+              />
+            ))}
+          </Box>
         </Box>
-      </Box>
+      )}
+
+      {/* Recommendation section */}
+      {currentAlert.recommendation && (
+        <Box>
+          <Typography variant="overline" sx={{ color: '#444746', fontWeight: 'bold', fontSize: '14px' }}>
+            RECOMMENDATION
+          </Typography>
+          <Box sx={{ mt: 1 }}>
+            {(Array.isArray(currentAlert.recommendation) ? currentAlert.recommendation : [currentAlert.recommendation]).map((rec, idx) => (
+              <Typography key={idx} variant="body1" sx={{
+                color: '#1f1f1f',
+                mb: 1,
+                pl: 2,
+                borderLeft: '3px solid #0b57d0',
+              }}>
+                {rec}
+              </Typography>
+            ))}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 };

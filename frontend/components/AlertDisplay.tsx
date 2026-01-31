@@ -313,7 +313,7 @@ const AlertDisplay: React.FC<AlertDisplayProps> = ({ alert, onDismiss, citations
                   {timing === 'now' ? '→ Actions Required:' : '→ Recommendations:'}
                 </Typography>
                 <Box component="ul" sx={{ margin: 0, paddingLeft: '1.5em' }}>
-                  {alert.recommendation.map((item, index) => (
+                  {(Array.isArray(alert.recommendation) ? alert.recommendation : [alert.recommendation]).map((item: string, index: number) => (
                     <Box component="li" key={index} sx={{ marginBottom: '0.25em' }}>
                       <Typography variant="body2">{item}</Typography>
                     </Box>

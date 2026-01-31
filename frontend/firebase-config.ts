@@ -12,18 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+// Firebase config disabled for local development
+// Uncomment below for production use with Firebase authentication
 
-import { firebaseConfig } from "./firebase-config-object";
+// import { initializeApp } from "firebase/app";
+// import { getAuth } from "firebase/auth";
+// import { firebaseConfig } from "./firebase-config-object";
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+// const app = initializeApp(firebaseConfig);
+// export const auth = getAuth(app);
+// export default app;
 
-// Initialize Firebase Authentication and get a reference to the service
-export const auth = getAuth(app);
-
-export default app;
+// Mock Firebase auth for local development
+export const auth = null;
+export default null;

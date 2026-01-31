@@ -56,6 +56,9 @@ export const useAudioStreamingWebSocket = ({
   // Get WebSocket URL from environment
   const getWebSocketUrl = () => {
     const baseUrl = import.meta.env.VITE_STREAMING_API;
+    if (!baseUrl) {
+      throw new Error('VITE_STREAMING_API is not configured');
+    }
     // Handle both HTTP (localhost) and HTTPS (production)
     return baseUrl
       .replace('https://', 'wss://')

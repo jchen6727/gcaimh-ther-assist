@@ -1034,7 +1034,7 @@ const NewSession: React.FC<NewSessionProps> = ({ onNavigateBack, patientId }) =>
                 {selectedAlert && selectedAlert.recommendation && selectedAlert.recommendation.length > 0 ? (
                   <Box sx={{ color: 'text.secondary' }}>
                     <Box component="ul" sx={{ margin: 0, paddingLeft: '1.5em' }}>
-                      {selectedAlert.recommendation.map((item, index) => (
+                      {(Array.isArray(selectedAlert.recommendation) ? selectedAlert.recommendation : [selectedAlert.recommendation]).map((item: string, index: number) => (
                         <Box component="li" key={index} sx={{ marginBottom: '0.25em' }}>
                           <Typography variant="body1" color="text.secondary" sx={{ fontSize: '1.1rem' }}>
                             {item}

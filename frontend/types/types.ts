@@ -24,7 +24,7 @@ export interface Alert {
   title: string;
   message: string;
   evidence?: string[];
-  recommendation?: string[]; // Array of recommendation strings
+  recommendation?: string | string[]; // Allow both string and array formats
   immediateActions?: string[];
   contraindications?: string[];
   manual_reference?: {
@@ -45,6 +45,7 @@ export interface SessionMetrics {
   therapeutic_alliance: 'weak' | 'moderate' | 'strong';
   techniques_detected: string[];
   emotional_state: 'calm' | 'anxious' | 'distressed' | 'dissociated' | 'engaged' | 'unknown';
+  arousal_level?: 'low' | 'moderate' | 'high' | 'elevated' | 'unknown';
   phase_appropriate: boolean;
 }
 

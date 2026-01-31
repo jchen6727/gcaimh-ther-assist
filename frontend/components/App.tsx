@@ -30,6 +30,7 @@ import Patients from './Patients';
 import Patient from './Patient';
 import LoginPage from './LoginPage';
 import { useAuth } from '../contexts/AuthContext';
+import { mockPatients } from '../utils/mockPatients';
 
 const App: React.FC = () => {
   const { currentUser } = useAuth();
@@ -191,29 +192,32 @@ const App: React.FC = () => {
   }
 
   if (currentView === 'therSummary') {
+    const summaryPatientName = sessionPatientId
+      ? mockPatients.find(p => p.id === sessionPatientId)?.name || 'Session Summary'
+      : 'Session Summary';
     return (
-      <TherSummary 
+      <TherSummary
         onNavigateBack={handleGoBack}
         sessionData={{
           id: 'Session ID',
-          date: new Date().toLocaleDateString('en-US', { 
-            year: 'numeric', 
-            month: 'long', 
+          date: new Date().toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
             day: 'numeric',
             hour: 'numeric',
             minute: '2-digit'
           }),
-          duration: 2460, // 41 minutes
+          duration: 2460,
           techniquesUsed: 18,
           riskLevel: 'Low',
-          patientName: 'John Doe',
+          patientName: summaryPatientName,
         }}
       />
     );
   }
 
-  // NewSession view - render the NewSession component
-  return <NewSession onNavigateBack={handleGoBack} patientId={sessionPatientId} />;
+  // NewSession view - render the therapy session component
+  return <NewTherSession onNavigateBack={handleGoBack} patientId={sessionPatientId} />;
 };
 
 export default App;
