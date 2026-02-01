@@ -6,6 +6,39 @@ gcloud auth application-default set-quota-project brk-prj-salvador-dura-bern-sbx
 zsh gcloud_env.zsh
 
 
+![img.png](img.png)
+
+
+
+```text
+Yes, now that you have your Discovery Engine data stores set up, you can absolutely use them for querying within Vertex AI, and you can initiate this process through the Google Cloud console.
+Here's a breakdown of how it works and what you'll typically need to do:
+The Role of "Apps" in Discovery Engine for Querying
+In Vertex AI Search (which includes Discovery Engine), you don't directly query a "data store." Instead, you query an "App" that is connected to one or more data stores. These apps are designed to provide the search and generative AI functionalities.
+Steps to Query Your Data Stores in the Google Cloud Console:
+Create an App and Connect Your Data Stores:
+In the Google Cloud console, navigate back to the AI Applications page.
+Click on Apps in the navigation menu (this is usually next to "Data Stores").
+Click Create App .
+You'll choose the type of app you want (e.g., "Search" for general information retrieval, or a "Generative AI App Builder" app for more advanced RAG experiences).
+During the app creation process, you will be prompted to connect your existing Discovery Engine data stores . You can connect one or both of your data stores, and for some app types (like custom search apps), you can even connect multiple data stores to enable "blended search" across them.
+If you're creating a Generative AI App Builder app, you might also configure options related to summarization, follow-up questions, and other LLM behaviors.
+Use the App's Preview/Testing Interface:
+Once your app is created and your data stores are connected, navigate to the details page for that specific app in the Google Cloud console.
+Many app types, especially search apps, will have a built-in "Preview" or "Test" interface directly in the console. This interface allows you to:
+Enter natural language queries.
+See the search results retrieved from your connected data stores.
+If it's a generative AI app, you'll see the LLM's generated response, often accompanied by citations to the specific documents or chunks from your data stores that were used for grounding.
+Experiment with different query parameters and observe the results.
+For Programmatic Querying (beyond the console):
+The console's testing interface is great for quick validation. However, for integrating this functionality into your own applications, you would typically use the Discovery Engine API (which is part of the Vertex AI Search API).
+The API allows you to send queries to your app and receive structured responses, including the retrieved documents/chunks and the LLM's generated text.
+In summary:
+You'll need to create an "App" within the AI Applications section and link your existing Discovery Engine data stores to it. After that, you can use the built-in testing features within the app's console interface to start querying your data and see the results powered by Vertex AI.
+
+
+
+```
 
 
 Notes: GCloud Auth & Discovery Engine API (2026)

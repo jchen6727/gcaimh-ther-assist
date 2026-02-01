@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Script to programmatically create a Vertex AI Search datastore with document chunking for RAG,
-using the modern Python SDK. This version demonstrates using a metadata.jsonl file
-to include custom structData for each document.
+using the modern Python SDK. This script handles the full, end-to-end process including
+GCS bucket creation, corpus upload, and datastore import with custom metadata.
 
-It includes a --skip-gcs-upload flag to recreate the datastore when the GCS bucket
-and corpus files already exist.
+This version demonstrates using a metadata.jsonl file to include custom
+structData for each document.
 """
 
 import os
@@ -257,41 +257,28 @@ def main():
     print(f"🚀 Setting up Vertex AI Search datastore for Ther-Assist")
     print(f"Project ID: {PROJECT_ID}")
     print(f"Datastore ID: {DATASTORE_ID}\n")
-
-    # Check for --skip-gcs-upload flag
-    skip_gcs_upload = "--skip-gcs-upload" in sys.argv
     
     try:
         datastore = create_datastore()
+        create_gcs_bucket()
         
-        if not skip_gcs_upload:
-            print("\n☁️  Running full setup including GCS bucket creation and corpus upload.")
-            create_gcs_bucket()
-            if not upload_corpus_to_gcs():
-                print("\n❌ GCS upload failed. Aborting.")
-                return # Exit if upload fails
-        else:
-            print("\n⏭️  --skip-gcs-upload flag detected. Skipping GCS bucket creation and corpus upload.")
-            print("   Assuming bucket and corpus files already exist.")
-
-        # Proceed with metadata creation and import
-        if create_metadata_jsonl():
-            if import_documents_to_datastore(datastore.name):
-                print("\n✨ RAG datastore setup is complete and ready for use! ✨")
-                print("\n📚 Your EBT corpus has been:")
-                if not skip_gcs_upload:
+        if upload_corpus_to_gcs():
+            if create_metadata_jsonl(): # Create the metadata file first
+                if import_documents_to_datastore(datastore.name):
+                    print("\n✨ RAG datastore setup is complete and ready for use! ✨")
+                    print("\n📚 Your EBT corpus has been:")
                     print("   ✅ Uploaded to GCS bucket")
-                print("   ✅ Described in a metadata.jsonl file with custom structData")
-                print("   ✅ Imported into Vertex AI Search")
-                print("   ✅ Configured with layout-aware chunking")
-                
-                print(f"\n🔗 Datastore Path: {datastore.name}")
+                    print("   ✅ Described in a metadata.jsonl file with custom structData")
+                    print("   ✅ Imported into Vertex AI Search")
+                    print("   ✅ Configured with layout-aware chunking")
+                    
+                    print(f"\n🔗 Datastore Path: {datastore.name}")
+                else:
+                    print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
+                    print("   Please check the logs above for details on failed documents.")
             else:
-                print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
-                print("   Please check the logs above for details on failed documents.")
-        else:
-            print("\n❌❌❌ METADATA CREATION FAILED ❌❌❌")
-            print("   Could not create the import_metadata.jsonl file. Aborting.")
+                print("\n❌❌❌ METADATA CREATION FAILED ❌❌❌")
+                print("   Could not create the import_metadata.jsonl file. Aborting.")
         
     except Exception as e:
         print(f"\n❌ An unrecoverable error occurred during setup: {str(e)}")
