@@ -1,21 +1,27 @@
 #!/usr/bin/env python3
 """
-Script to programmatically create a Vertex AI Search datastore with document chunking for RAG,
-using the modern Python SDK. This script handles the full, end-to-end process including
-GCS bucket creation, corpus upload, and datastore import with custom metadata.
+Creates or recreates a Vertex AI Search datastore from an existing GCS bucket.
 
-This version demonstrates using a metadata.jsonl file to include custom
-structData for each document.
+This script is designed for scenarios where the corpus files already exist in a GCS
+bucket. It performs the following steps:
+1. Creates a new Vertex AI Search datastore (or gets it if it exists).
+2. Scans the specified GCS bucket to generate a metadata.jsonl file with custom
+   structData for each document.
+3. Imports the documents into the datastore using the metadata file.
+
+This is useful for disaster recovery, CI/CD pipelines, or experimenting with
+different datastore configurations against the same source data.
 """
 
 import os
 import sys
 import time
 import json
+import argparse
+from google.api_core import exceptions
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import storage
 from . import constants
-from . import utils
 
 def create_datastore(project_id: str, location: str, datastore_id: str, display_name: str):
     """Create a Vertex AI Search datastore using the Python SDK."""
@@ -46,9 +52,6 @@ def create_datastore(project_id: str, location: str, datastore_id: str, display_
                  "docx": discoveryengine.DocumentProcessingConfig.ParsingConfig(
                     layout_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig.LayoutParsingConfig()
                 ),
-                "html": discoveryengine.DocumentProcessingConfig.ParsingConfig(
-                    layout_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig.LayoutParsingConfig()
-                )
             }
         ),
     )
@@ -64,69 +67,30 @@ def create_datastore(project_id: str, location: str, datastore_id: str, display_
         response = operation.result()
         print(f"✅ Datastore '{response.name}' created successfully!")
         return response
+    except exceptions.AlreadyExists:
+        print(f"⚠️  Datastore '{datastore_id}' already exists.")
+        return client.get_data_store(name=f"{parent}/dataStores/{datastore_id}")
     except Exception as e:
-        if "AlreadyExists" in str(e):
-            print(f"⚠️  Datastore '{datastore_id}' already exists.")
-            return client.get_data_store(name=f"{parent}/dataStores/{datastore_id}")
-        else:
-            print(f"❌ Error creating datastore: {e}")
-            raise
+        print(f"❌ Error creating datastore: {e}")
+        raise
 
-def upload_corpus_to_gcs(project_id: str, bucket_name: str, corpus_dir: str):
-    """Upload EBT corpus files from the local filesystem to GCS."""
-    client = storage.Client(project=project_id)
-    bucket = client.bucket(bucket_name)
-
-    if not os.path.exists(corpus_dir):
-        print(f"❌ Corpus directory '{corpus_dir}' not found!")
-        print(f"   Current directory: {os.getcwd()}")
-        return False
-
-    files_uploaded = 0
-    files_failed = 0
-    for filename in os.listdir(corpus_dir):
-        if filename.endswith(('.pdf', '.docx', '.txt')):
-            local_path = os.path.join(corpus_dir, filename)
-            blob_name = f"corpus/{filename}"
-            blob = bucket.blob(blob_name)
-
-            if blob.exists():
-                print(f"ℹ️ Skipping {filename}, already exists in GCS.")
-                files_uploaded += 1
-                continue
-
-            try:
-                print(f"📤 Uploading {filename}...")
-                blob.upload_from_filename(local_path)
-                files_uploaded += 1
-                print(f"  ✅ Successfully uploaded {filename}")
-            except Exception as e:
-                print(f"  ❌ Failed to upload {filename}: {e}")
-                files_failed += 1
-
-    print("\n📊 Upload Summary:")
-    print(f"  ✅ Files processed (uploaded or skipped): {files_uploaded}")
-    if files_failed > 0:
-        print(f"  ❌ Failed to upload: {files_failed}")
-    return files_uploaded > 0 and files_failed == 0
-
-def create_metadata_jsonl(project_id: str, bucket_name: str, corpus_dir: str, metadata_file_name: str):
+def create_metadata_jsonl(project_id: str, bucket_name: str, corpus_dir_prefix: str, metadata_file_name: str):
     """
-    Creates a metadata.jsonl file in GCS for batch import.
+    Creates a metadata.jsonl file in GCS for batch import by scanning a bucket.
     This file includes custom structData for each document.
     """
-    print("\n📄 Creating metadata file for import...")
+    print(f"\n📄 Creating metadata file for import from bucket '{bucket_name}'...")
     client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
 
-    corpus_blobs = list(bucket.list_blobs(prefix=f"{corpus_dir}/"))
+    corpus_blobs = list(bucket.list_blobs(prefix=corpus_dir_prefix))
     if not corpus_blobs:
-        print(f"❌ No corpus files found in GCS bucket '{bucket_name}' under prefix '{corpus_dir}/'.")
+        print(f"❌ No corpus files found in GCS bucket '{bucket_name}' under prefix '{corpus_dir_prefix}'.")
         return False
 
     metadata_lines = []
     for blob in corpus_blobs:
-        if not blob.name.endswith('/'): # Ignore "folders"
+        if not blob.name.endswith('/'): # Ignore "folders" 
             file_path = blob.name
             filename = os.path.basename(file_path)
             doc_id = filename.replace('.', '_').replace(' ', '_')
@@ -180,7 +144,7 @@ def import_documents_to_datastore(location: str, datastore_name: str, bucket_nam
         parent=f"{datastore_name}/branches/0",
         gcs_source=discoveryengine.GcsSource(
             input_uris=[gcs_uri],
-            data_schema="document"  # Use 'document' schema for JSONL metadata
+            data_schema="document"
         ),
         reconciliation_mode=discoveryengine.ImportDocumentsRequest.ReconciliationMode.INCREMENTAL,
         error_config=discoveryengine.ImportErrorConfig(
@@ -193,14 +157,14 @@ def import_documents_to_datastore(location: str, datastore_name: str, bucket_nam
         operation = client.import_documents(request=request)
         print(f"⏳ Waiting for import operation to complete... (Timeout: {timeout}s)")
         
-        operation.result(timeout=timeout) # Wait for completion
+        operation.result(timeout=timeout)
         metadata = discoveryengine.ImportDocumentsMetadata(operation.metadata)
 
         success_count = metadata.success_count
         failure_count = metadata.failure_count
 
         print("\n✅ Import operation finished!")
-        print(f"  📊 Import Statistics:")
+        print("  📊 Import Statistics:")
         print(f"    - Success Count: {success_count}")
         print(f"    - Failure Count: {failure_count}")
 
@@ -218,55 +182,44 @@ def import_documents_to_datastore(location: str, datastore_name: str, bucket_nam
 
 def main():
     """Main function to set up the RAG datastore."""
+    parser = argparse.ArgumentParser(description="Recreate a Vertex AI Search datastore from an existing GCS bucket.")
+    parser.add_argument("bucket", help="The name of the GCS bucket containing the corpus files.")
+    args = parser.parse_args()
+    
+    bucket_name = args.bucket
+
     if not constants.PROJECT_ID:
         sys.exit(1)
 
-    print(f"🚀 Setting up Vertex AI Search datastore for Ther-Assist")
+    print(f"🚀 Recreating Vertex AI Search datastore from GCS bucket: {bucket_name}")
     print(f"Project ID: {constants.PROJECT_ID}")
-    print(f"Datastore ID: {constants.EBT_DATASTORE_ID}\n")
+    print(f"Datastore ID: {constants.RECREATED_DATASTORE_ID}\n")
     
     try:
         datastore = create_datastore(
             project_id=constants.PROJECT_ID,
-            location=constants.EBT_LOCATION,
-            datastore_id=constants.EBT_DATASTORE_ID,
-            display_name=constants.EBT_DISPLAY_NAME
-        )
-        utils.create_gcs_bucket(
-            project_id=constants.PROJECT_ID,
-            bucket_name=constants.EBT_BUCKET_NAME,
-            location=constants.EBT_LOCATION
+            location=constants.RECREATED_LOCATION,
+            datastore_id=constants.RECREATED_DATASTORE_ID,
+            display_name=constants.RECREATED_DISPLAY_NAME
         )
         
-        if upload_corpus_to_gcs(
+        if create_metadata_jsonl(
             project_id=constants.PROJECT_ID,
-            bucket_name=constants.EBT_BUCKET_NAME,
-            corpus_dir=constants.EBT_CORPUS_DIR
+            bucket_name=bucket_name,
+            corpus_dir_prefix=constants.RECREATED_CORPUS_DIR_PREFIX,
+            metadata_file_name=constants.RECREATED_METADATA_FILE_NAME
         ):
-            if create_metadata_jsonl(
-                project_id=constants.PROJECT_ID,
-                bucket_name=constants.EBT_BUCKET_NAME,
-                corpus_dir=constants.EBT_CORPUS_DIR,
-                metadata_file_name=constants.EBT_METADATA_FILE_NAME
+            if import_documents_to_datastore(
+                location=constants.RECREATED_LOCATION,
+                datastore_name=datastore.name,
+                bucket_name=bucket_name,
+                metadata_file_name=constants.RECREATED_METADATA_FILE_NAME
             ):
-                if import_documents_to_datastore(
-                    location=constants.EBT_LOCATION,
-                    datastore_name=datastore.name,
-                    bucket_name=constants.EBT_BUCKET_NAME,
-                    metadata_file_name=constants.EBT_METADATA_FILE_NAME
-                ):
-                    print("\n✨ RAG datastore setup is complete and ready for use! ✨")
-                    print("\n📚 Your EBT corpus has been:")
-                    print("   ✅ Uploaded to GCS bucket")
-                    print("   ✅ Described in a metadata.jsonl file with custom structData")
-                    print("   ✅ Imported into Vertex AI Search")
-                    print("   ✅ Configured with layout-aware chunking")
-                    
-                    print(f"\n🔗 Datastore Path: {datastore.name}")
-                else:
-                    print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
+                print("\n✨ RAG datastore recreation is complete and ready for use! ✨")
             else:
-                print("\n❌❌❌ METADATA CREATION FAILED ❌❌❌")
+                print("\n❌❌❌ IMPORT OPERATION FAILED ❌❌❌")
+        else:
+            print("\n❌❌❌ METADATA CREATION FAILED ❌❌❌")
         
     except Exception as e:
         print(f"\n❌ An unrecoverable error occurred during setup: {str(e)}")
