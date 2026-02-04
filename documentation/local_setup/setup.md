@@ -47,7 +47,7 @@ projectNumber: '732496392829'
 ```
 
 for gcloud API
-`gcloud auth application-default login`
+`gcloud auth application-default login` ( + `--login-config=$AUTH_JSON`)
 `gcloud auth application-default set-quota-project $(gcloud config get-value project)`
 
 for gcloud CLI (DON'T USE!)

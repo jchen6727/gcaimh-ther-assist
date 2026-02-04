@@ -35,6 +35,21 @@ except ImportError:
 # Load environment variables
 load_dotenv()
 
+# --- Globals and Constants ---
+PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
+LOCATION = "us-central1"
+DS_LOCATION = "us"
+DS_GLOBAL_LOCATION = "global"
+
+# Datastore IDs
+EBT_CORPUS_ID = "ebt-corpus"
+TRANSCRIPT_PATTERNS_ID = "transcript-patterns"
+CBT_CORPUS_ID = "cbt-corpus"
+BA_CORPUS_ID = "ba-corpus"
+DBT_CORPUS_ID = "dbt-corpus"
+IPT_CORPUS_ID = "ipt-corpus"
+
+
 # --- Initialize Logging ---
 logging.basicConfig(level=logging.INFO)
 
@@ -207,76 +222,35 @@ def verify_firebase_token(token: str) -> Optional[Dict]:
 
 # --- Initialize Google GenAI ---
 try:
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project_id:
+    if not PROJECT_ID:
         logging.warning("GOOGLE_CLOUD_PROJECT environment variable not set.")
     
     # Initialize the client
     client = genai.Client(
         vertexai=True,
-        project=project_id,
-        location="us-central1",
+        project=PROJECT_ID,
+        location=LOCATION,
     )
-    logging.info(f"Google GenAI initialized for project '{project_id}'")
+    logging.info(f"Google GenAI initialized for project '{PROJECT_ID}'")
 except Exception as e:
     logging.error(f"CRITICAL: Error initializing Google GenAI: {e}", exc_info=True)
 
-# Configure RAG tools with EBT manuals, modality-specific research, and transcript patterns
-# ── Core RAG Tools (always available) ──────────────────────────────────────────
-# EBT Manuals RAG Tool - therapy treatment manuals (PE, CBT-Social Phobia, Deliberate Practice)
-MANUAL_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/ebt-corpus"
+def create_rag_tool(project_id: str, location: str, datastore_id: str) -> types.Tool:
+    """Helper to create a RAG tool for a given datastore."""
+    datastore_path = f"projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{datastore_id}"
+    return types.Tool(
+        retrieval=types.Retrieval(
+            vertex_ai_search=types.VertexAISearch(datastore=datastore_path)
         )
     )
-)
 
-# Transcript Patterns RAG Tool - Beck sessions, PE sessions, ThousandVoicesOfTrauma conversations
-TRANSCRIPT_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/transcript-patterns"
-        )
-    )
-)
-
-# ── Modality-Specific RAG Tools ────────────────────────────────────────────────
-# CBT Clinical Research - 31 randomized controlled trials and clinical studies
-CBT_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/cbt-corpus"
-        )
-    )
-)
-
-# BA (Behavioral Activation) Clinical Research - 11 RCTs and treatment studies
-BA_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/ba-corpus"
-        )
-    )
-)
-
-# DBT (Dialectical Behavior Therapy) Clinical Research - 6 RCTs and systematic reviews
-DBT_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/dbt-corpus"
-        )
-    )
-)
-
-# IPT (Interpersonal Psychotherapy) Clinical Research - 10 RCTs and meta-analyses
-IPT_RAG_TOOL = types.Tool(
-    retrieval=types.Retrieval(
-        vertex_ai_search=types.VertexAISearch(
-            datastore=f"projects/{project_id}/locations/us/collections/default_collection/dataStores/ipt-corpus"
-        )
-    )
-)
+# --- RAG Tool Definitions ---
+MANUAL_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, EBT_CORPUS_ID)
+TRANSCRIPT_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_GLOBAL_LOCATION, TRANSCRIPT_PATTERNS_ID)
+CBT_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, CBT_CORPUS_ID)
+BA_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, BA_CORPUS_ID)
+DBT_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, DBT_CORPUS_ID)
+IPT_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, IPT_CORPUS_ID)
 
 # ── Modality → RAG Tool Mapping ────────────────────────────────────────────────
 MODALITY_RAG_MAP = {
@@ -313,7 +287,7 @@ def get_rag_tools_for_session(session_context, is_realtime=False):
 
     modality_tool_name = session_type.lower() + "-corpus" if session_type in MODALITY_RAG_MAP else "cbt-corpus"
     logging.info(f"[RAG] Session type '{session_type}' → tools: ebt-corpus + {modality_tool_name}"
-                 f"{' + transcript-patterns' if not is_realtime else ''}")
+                 f"{'+ transcript-patterns' if not is_realtime else ''}")
 
     return tools
 
@@ -327,7 +301,7 @@ def therapy_analysis(request):
     logging.warning(request.method)
     if request.method == 'OPTIONS':
         headers = {
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': '*', 
             'Access-Control-Allow-Methods': 'GET, POST',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
@@ -335,7 +309,7 @@ def therapy_analysis(request):
         return ('', 204, headers)
 
     headers = {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': '*', 
         'Access-Control-Allow-Methods': 'GET, POST',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization'
     }
@@ -522,7 +496,7 @@ def handle_realtime_analysis_with_retry(transcript_segment, transcript_text, pre
             last_chunk = None
             chunk_count = 0
             for chunk in client.models.generate_content_stream(
-                model=constants.MODEL_NAME,
+                model=constants.MODEL_NAME, 
                 contents=contents,
                 config=config
             ):
@@ -641,7 +615,7 @@ def handle_realtime_analysis_with_retry(transcript_segment, transcript_text, pre
             
             # First attempt with selected prompt
             parsed_result, response_text, citations, diag = try_analysis_with_prompt(
-                first_prompt,
+                first_prompt, 
                 first_prompt_name
             )
 
