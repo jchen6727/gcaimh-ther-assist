@@ -73,6 +73,7 @@ import RationaleModal from './RationaleModal';
 import CitationModal from './CitationModal';
 import TherapistNotesPanel from './TherapistNotesPanel';
 import { useAudioStreamingWebSocketTher } from '../hooks/useAudioStreamingWebSocketTher';
+import axios from 'axios';
 import { useTherapyAnalysis } from '../hooks/useTherapyAnalysis';
 import { useAuth } from '../contexts/AuthContext';
 import BackendStatusIndicator from './BackendStatusIndicator';
@@ -88,6 +89,7 @@ interface NewTherSessionProps {
   sessionDuration?: number;
   sessionPhase?: string;
   sessionId?: string;
+  onSessionSaved?: (session: { id: string; date: string; duration: string; summary: string }) => void;
   currentGuidance?: {
     title: string;
     time: string;
@@ -108,6 +110,7 @@ interface NewTherSessionProps {
 const NewTherSession: React.FC<NewTherSessionProps> = ({
   onNavigateBack,
   patientId,
+  onSessionSaved,
 }) => {
   const { currentUser } = useAuth();
   const theme = useTheme();
@@ -902,25 +905,71 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
     setSummaryError(null);
     setSessionSummaryClosed(true);
     try {
-      const fullTranscript = transcript
+      // Use refs to avoid stale closure — requestSummary may be called from
+      // setInterval callbacks or after React batched state updates
+      const currentTranscript = transcriptRef.current;
+      const currentMetrics = sessionMetricsRef.current;
+
+      const fullTranscript = currentTranscript
         .filter(t => !t.is_interim)
         .map(t => ({
           speaker: 'conversation',
           text: t.text,
           timestamp: t.timestamp,
         }));
-      
-      const result = await generateSessionSummary(fullTranscript, sessionMetrics);
 
-      if (result.summary) {
+      console.log(`[Summary] Preparing request with ${fullTranscript.length} transcript entries (from ${currentTranscript.length} total)`);
+
+      if (fullTranscript.length === 0) {
+        throw new Error('No transcript data available for summary generation.');
+      }
+
+      const result = await generateSessionSummary(fullTranscript, currentMetrics);
+
+      if (result && result.summary) {
         setSessionSummary(result.summary);
         setShowSessionSummary(true);
+
+        // Fire-and-forget: persist session to Firestore via backend
+        const ANALYSIS_API = import.meta.env.VITE_ANALYSIS_API || '';
+        if (ANALYSIS_API && patientId) {
+          const durationMin = Math.floor(sessionDurationRef.current / 60);
+          axios.post(`${ANALYSIS_API}/therapy_analysis`, {
+            action: 'save_session',
+            patient_id: patientId,
+            date: new Date().toISOString().split('T')[0],
+            duration_minutes: durationMin,
+            summary_text: result.summary.overall_assessment || result.summary.session_overview || 'Session completed',
+            session_type: sessionContextRef.current?.current_approach || 'General',
+            full_summary: result.summary,
+            session_metrics: sessionMetricsRef.current,
+          }, {
+            headers: currentUser ? { Authorization: `Bearer ${currentUser}` } : {},
+          }).then(res => {
+            console.log('[Session Save] Saved to Firestore:', res.data);
+            // Notify parent so patient session list updates without a full reload
+            if (onSessionSaved && res.data?.session_id) {
+              onSessionSaved({
+                id: res.data.session_id,
+                date: new Date().toISOString().split('T')[0],
+                duration: `${durationMin} min`,
+                summary: result.summary.overall_assessment || result.summary.session_overview || 'Session completed',
+              });
+            }
+          }).catch(err => {
+            console.error('[Session Save] Failed (non-blocking):', err?.message || err);
+          });
+        }
       } else {
-        throw new Error('Invalid summary response');
+        throw new Error('Invalid summary response — the AI model returned an incomplete result. Please retry.');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error generating summary:', err);
-      setSummaryError('Failed to generate session summary. Please try again.');
+      // Use the classified error message if available, otherwise fall back to generic
+      const errorMessage = err instanceof Error && err.message
+        ? err.message
+        : 'Failed to generate session summary. Please try again.';
+      setSummaryError(errorMessage);
     } finally {
       setSummaryLoading(false);
     }

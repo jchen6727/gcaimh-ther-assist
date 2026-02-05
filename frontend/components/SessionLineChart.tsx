@@ -3,6 +3,45 @@ import { ComposedChart, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Area
 import { Box, Typography } from '@mui/material';
 import { ChartDataPoint, formatDataForChart } from '../utils/chartDataUtils';
 
+// Custom tooltip — defined outside component to avoid re-creation on every render
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <Box sx={{
+        backgroundColor: 'white',
+        border: '1px solid #e0e0e0',
+        borderRadius: 1,
+        p: 1.5,
+        boxShadow: 2,
+      }}>
+        <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>
+          {data.timeDisplay || `${label} min`}
+        </Typography>
+        {payload.map((item: any, index: number) => (
+          <Typography
+            key={index}
+            variant="caption"
+            sx={{
+              color: item.color,
+              display: 'block',
+              fontSize: '11px'
+            }}
+          >
+            {item.name}: {item.value}%
+          </Typography>
+        ))}
+        {data.isInterpolated && (
+          <Typography variant="caption" sx={{ color: '#666', fontSize: '10px', fontStyle: 'italic' }}>
+            Interpolated
+          </Typography>
+        )}
+      </Box>
+    );
+  }
+  return null;
+};
+
 interface SessionLineChartProps {
   duration: number;
   chartData?: ChartDataPoint[];
@@ -14,57 +53,11 @@ const SessionLineChart: React.FC<SessionLineChartProps> = ({
 }) => {
   // Only show chart if we have at least 2 real data points
   const data = React.useMemo(() => {
-    console.log('SessionLineChart - chartData length:', chartData.length, 'duration:', duration);
-    
     if (chartData.length >= 2) {
-      // Use only real chart data, no interpolation to avoid extra tick marks
-      const formattedData = formatDataForChart(chartData);
-      console.log('SessionLineChart - using real data:', formattedData);
-      return formattedData;
-    } else {
-      console.log('SessionLineChart - insufficient data points, showing empty chart');
-      return [];
+      return formatDataForChart(chartData);
     }
+    return [];
   }, [chartData, duration]);
-
-  // Custom tooltip to show real data values
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      const data = payload[0].payload;
-      return (
-        <Box sx={{
-          backgroundColor: 'white',
-          border: '1px solid #e0e0e0',
-          borderRadius: 1,
-          p: 1.5,
-          boxShadow: 2,
-        }}>
-          <Typography variant="caption" sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}>
-            {data.timeDisplay || `${label} min`}
-          </Typography>
-          {payload.map((item: any, index: number) => (
-            <Typography 
-              key={index}
-              variant="caption" 
-              sx={{ 
-                color: item.color, 
-                display: 'block',
-                fontSize: '11px'
-              }}
-            >
-              {item.name}: {item.value}%
-            </Typography>
-          ))}
-          {data.isInterpolated && (
-            <Typography variant="caption" sx={{ color: '#666', fontSize: '10px', fontStyle: 'italic' }}>
-              Interpolated
-            </Typography>
-          )}
-        </Box>
-      );
-    }
-    return null;
-  };
 
   return (
     <ResponsiveContainer width="100%" height={220}>
@@ -138,4 +131,4 @@ const SessionLineChart: React.FC<SessionLineChartProps> = ({
   );
 };
 
-export default SessionLineChart;
+export default React.memo(SessionLineChart);

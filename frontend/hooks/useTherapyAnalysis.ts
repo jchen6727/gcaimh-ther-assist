@@ -125,11 +125,19 @@ export const useTherapyAnalysis = ({
         console.warn('[Analysis] ⚠️ Empty response from backend');
       }
     } catch (error: any) {
+      const backendError = error.response?.data?.error;
       console.error('[Analysis] ❌ Request failed:', {
         message: error.message,
         status: error.response?.status,
+        backendError,
         data: error.response?.data
       });
+      // Log classified root cause for developer debugging
+      if (backendError?.includes('credentials') || backendError?.includes('default credentials were not found')) {
+        console.error('[Analysis] ❌ ROOT CAUSE: GCP credentials not configured. Set GOOGLE_APPLICATION_CREDENTIALS in backend .env');
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+        console.error('[Analysis] ❌ ROOT CAUSE: Cannot reach backend. Is the server running on the configured port?');
+      }
     }
   }, [onAnalysis, ANALYSIS_API, authToken]);
 
@@ -195,7 +203,7 @@ export const useTherapyAnalysis = ({
         status: error.response?.status,
         responseTime: `${(performance.now() - startTime).toFixed(0)}ms`
       });
-      throw error;
+      return null;
     }
   }, [ANALYSIS_API, onPathwayGuidance, authToken]);
 
@@ -241,12 +249,35 @@ export const useTherapyAnalysis = ({
 
       return response.data;
     } catch (error: any) {
+      const backendError = error.response?.data?.error;
+      const statusCode = error.response?.status;
+      const responseTime = `${(performance.now() - startTime).toFixed(0)}ms`;
+
       console.error('[Summary] ❌ Request failed:', {
         message: error.message,
-        status: error.response?.status,
-        responseTime: `${(performance.now() - startTime).toFixed(0)}ms`
+        status: statusCode,
+        backendError,
+        responseTime,
       });
-      throw error;
+
+      // Build a descriptive error message that includes backend details
+      let errorMessage = 'Session summary request failed.';
+      if (statusCode === 500 && backendError) {
+        if (backendError.includes('credentials') || backendError.includes('default credentials were not found')) {
+          errorMessage = 'GCP authentication error — credentials not configured or expired. Check backend .env or run "gcloud auth application-default login".';
+        } else if (backendError.includes('PERMISSION_DENIED')) {
+          errorMessage = 'GCP permission denied. Check IAM roles for the service account.';
+        } else {
+          errorMessage = `Backend error: ${backendError}`;
+        }
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+        errorMessage = 'Cannot connect to analysis backend. Is the server running?';
+      } else if (error.code === 'ECONNABORTED') {
+        errorMessage = 'Request timed out — backend may be overloaded.';
+      }
+
+      // Throw so the caller gets the classified error message
+      throw new Error(errorMessage);
     }
   }, [ANALYSIS_API, onSessionSummary, authToken]);
 

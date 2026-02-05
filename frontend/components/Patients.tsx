@@ -39,9 +39,9 @@ import {
   Add,
 } from '@mui/icons-material';
 import { Patient } from '../types/types';
-import { mockPatients } from '../utils/mockPatients';
 
 interface PatientsProps {
+  patients: Patient[];
   onNavigateBack: () => void;
   onNavigateToNewSession: (patientId?: string) => void;
   onNavigateToPatient: (patientId: string) => void;
@@ -50,11 +50,11 @@ interface PatientsProps {
 type SortableColumn = 'name' | 'age' | 'primaryConcern' | 'nextVisit' | 'lastVisit' | 'patientSince';
 type SortDirection = 'asc' | 'desc';
 
-const Patients: React.FC<PatientsProps> = ({ onNavigateBack, onNavigateToNewSession, onNavigateToPatient }) => {
+const Patients: React.FC<PatientsProps> = ({ patients, onNavigateBack, onNavigateToNewSession, onNavigateToPatient }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortColumn, setSortColumn] = useState<SortableColumn>('nextVisit');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-  const [filteredPatients, setFilteredPatients] = useState<Patient[]>(mockPatients);
+  const [filteredPatients, setFilteredPatients] = useState<Patient[]>(patients);
 
   // Handle column sort
   const handleSort = (column: SortableColumn) => {
@@ -111,8 +111,8 @@ const Patients: React.FC<PatientsProps> = ({ onNavigateBack, onNavigateToNewSess
 
   // Filter and sort patients based on search term and sort settings
   React.useEffect(() => {
-    let result = mockPatients;
-    
+    let result = patients;
+
     // Apply search filter
     if (searchTerm) {
       result = result.filter(patient =>
@@ -120,12 +120,12 @@ const Patients: React.FC<PatientsProps> = ({ onNavigateBack, onNavigateToNewSess
         patient.focusTopics?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
-    
+
     // Apply sorting
     result = sortPatients(result, sortColumn, sortDirection);
-    
+
     setFilteredPatients(result);
-  }, [searchTerm, sortColumn, sortDirection]);
+  }, [patients, searchTerm, sortColumn, sortDirection]);
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Not scheduled';
@@ -401,7 +401,7 @@ const Patients: React.FC<PatientsProps> = ({ onNavigateBack, onNavigateToNewSess
             backgroundColor: '#f5f5f5'
           }}>
             <Typography variant="body2" color="text.secondary">
-              Showing {filteredPatients.length} of {mockPatients.length} patients
+              Showing {filteredPatients.length} of {patients.length} patients
             </Typography>
           </Box>
         </Paper>

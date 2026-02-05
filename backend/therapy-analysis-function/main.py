@@ -25,7 +25,7 @@ import time
 from typing import List, Dict, Tuple, Optional, Any
 from datetime import datetime, timedelta
 import firebase_admin
-from firebase_admin import auth, credentials
+from firebase_admin import auth, credentials, firestore
 from dotenv import load_dotenv
 try:
     from . import constants
@@ -61,6 +61,14 @@ try:
     logging.info("Firebase Admin SDK initialized")
 except Exception as e:
     logging.error(f"Error initializing Firebase Admin SDK: {e}", exc_info=True)
+
+# --- Initialize Firestore Client ---
+db = None
+try:
+    db = firestore.client()
+    logging.info("Firestore client initialized")
+except Exception as e:
+    logging.warning(f"Firestore client init failed (sessions will not persist): {e}")
 
 # --- Load Authorization Configuration from Environment ---
 ALLOWED_DOMAINS = set(os.environ.get('AUTH_ALLOWED_DOMAINS', '').split(',')) if os.environ.get('AUTH_ALLOWED_DOMAINS') else set()
@@ -107,8 +115,34 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
             logging.debug(f"Error with pattern {i+1}: {e}")
             continue
     
+    # Strategy 3: Attempt to repair truncated JSON (from max_output_tokens cutoff)
+    # Find the start of a JSON object and try to close unclosed braces/brackets
+    json_start = text.find('{')
+    if json_start >= 0:
+        truncated = text[json_start:]
+        # Remove trailing incomplete strings/keys (anything after last complete value)
+        # Try progressively closing open brackets
+        for trim_end in range(len(truncated), max(len(truncated) - 200, 0), -1):
+            candidate = truncated[:trim_end]
+            # Count open/close braces and brackets
+            open_braces = candidate.count('{') - candidate.count('}')
+            open_brackets = candidate.count('[') - candidate.count(']')
+            if open_braces >= 0 and open_brackets >= 0:
+                # Strip any trailing comma or incomplete key
+                candidate = candidate.rstrip()
+                if candidate.endswith(','):
+                    candidate = candidate[:-1]
+                # Close any remaining open structures
+                candidate += ']' * open_brackets + '}' * open_braces
+                try:
+                    parsed = json.loads(candidate)
+                    logging.warning(f"Repaired truncated JSON (closed {open_braces} braces, {open_brackets} brackets)")
+                    return parsed
+                except json.JSONDecodeError:
+                    continue
+
     logging.error("JSON extraction failed for text:")
-    logging.info(text)
+    logging.info(text[:500] if len(text) > 500 else text)
     return None
 
 def extract_usage_metadata(chunk) -> Dict[str, Any]:
@@ -235,14 +269,59 @@ try:
 except Exception as e:
     logging.error(f"CRITICAL: Error initializing Google GenAI: {e}", exc_info=True)
 
+# --- Startup Credential Validation ---
+def _validate_credentials_at_startup():
+    """Log clear warnings if ADC are missing/broken so the developer knows immediately."""
+    import google.auth
+
+    creds_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+    if creds_path:
+        if os.path.exists(creds_path):
+            logging.info(f"GOOGLE_APPLICATION_CREDENTIALS set: {creds_path}")
+        else:
+            logging.critical(
+                f"GOOGLE_APPLICATION_CREDENTIALS file not found: {creds_path}. "
+                "API calls will fail. Fix the path or run: gcloud auth application-default login"
+            )
+            return
+    else:
+        # Check well-known ADC location
+        well_known_path = os.path.join(
+            os.environ.get('APPDATA', os.path.expanduser('~')),
+            'gcloud', 'application_default_credentials.json'
+        )
+        if os.path.exists(well_known_path):
+            logging.info(f"ADC found at well-known path: {well_known_path}")
+            logging.warning(
+                "GOOGLE_APPLICATION_CREDENTIALS not set explicitly in .env. "
+                f"Consider adding: GOOGLE_APPLICATION_CREDENTIALS={well_known_path}"
+            )
+        else:
+            logging.critical(
+                "No Application Default Credentials found. API calls WILL FAIL. "
+                "Run: gcloud auth application-default login  OR  "
+                "set GOOGLE_APPLICATION_CREDENTIALS in .env"
+            )
+
+    # Attempt to load credentials to validate they are usable
+    try:
+        cred_obj, cred_project = google.auth.default()
+        logging.info(f"Credentials OK — project: {cred_project}, type: {type(cred_obj).__name__}")
+    except Exception as e:
+        logging.critical(f"google.auth.default() FAILED: {e}. All GenAI API calls will fail.")
+
+_validate_credentials_at_startup()
+
+# Configure RAG tools with EBT manuals, modality-specific research, and transcript patterns
+# ── Core RAG Tools (always available) ──────────────────────────────────────────
+# EBT Manuals RAG Tool - therapy treatment manuals (PE, CBT-Social Phobia, Deliberate Practice)
+
 def create_rag_tool(project_id: str, location: str, datastore_id: str) -> types.Tool:
     """Helper to create a RAG tool for a given datastore."""
     datastore_path = f"projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{datastore_id}"
     return types.Tool(
         retrieval=types.Retrieval(
             vertex_ai_search=types.VertexAISearch(datastore=datastore_path)
-        )
-    )
 
 # --- RAG Tool Definitions ---
 MANUAL_RAG_TOOL = create_rag_tool(PROJECT_ID, DS_LOCATION, EBT_CORPUS_ID)
@@ -340,18 +419,163 @@ def therapy_analysis(request):
 
         action = request_json.get('action')
         
-        if action == 'analyze_segment':
+        if action == 'health_check':
+            return handle_health_check(headers)
+        elif action == 'analyze_segment':
             return handle_segment_analysis(request_json, headers)
         elif action == 'pathway_guidance':
             return handle_pathway_guidance(request_json, headers)
         elif action == 'session_summary':
             return handle_session_summary(request_json, headers)
+        elif action == 'save_session':
+            return handle_save_session(request_json, headers)
+        elif action == 'get_sessions':
+            return handle_get_sessions(request_json, headers)
         else:
-            return (jsonify({'error': 'Invalid action. Use "analyze_segment", "pathway_guidance", or "session_summary"'}), 400, headers)
+            return (jsonify({'error': 'Invalid action. Use "health_check", "analyze_segment", "pathway_guidance", "session_summary", "save_session", or "get_sessions"'}), 400, headers)
 
     except Exception as e:
         logging.exception(f"An unexpected error occurred: {str(e)}")
         return (jsonify({'error': 'An internal server error occurred.'}), 500, headers)
+
+def handle_save_session(request_json, headers):
+    """
+    Save a completed therapy session to Firestore.
+    Expected payload:
+      patient_id, date, duration_minutes, summary_text, session_type,
+      full_summary (dict), session_metrics (dict)
+    """
+    if not db:
+        logging.warning("[SaveSession] Firestore not available — session not saved")
+        return (jsonify({'error': 'Firestore is not configured. Session was not saved.'}), 503, headers)
+
+    try:
+        patient_id = request_json.get('patient_id')
+        if not patient_id:
+            return (jsonify({'error': 'patient_id is required'}), 400, headers)
+
+        doc_data = {
+            'patient_id': str(patient_id),
+            'date': request_json.get('date', datetime.utcnow().strftime('%Y-%m-%d')),
+            'duration_minutes': request_json.get('duration_minutes', 0),
+            'summary_text': request_json.get('summary_text', ''),
+            'session_type': request_json.get('session_type', 'General'),
+            'full_summary': request_json.get('full_summary', {}),
+            'session_metrics': request_json.get('session_metrics', {}),
+            'created_at': firestore.SERVER_TIMESTAMP,
+        }
+
+        doc_ref = db.collection('sessions').add(doc_data)
+        doc_id = doc_ref[1].id  # add() returns (write_result, doc_ref)
+
+        logging.info(f"[SaveSession] Saved session {doc_id} for patient {patient_id}")
+        return (jsonify({'success': True, 'session_id': doc_id}), 200, headers)
+
+    except Exception as e:
+        logging.exception(f"[SaveSession] Error saving session: {e}")
+        return (jsonify({'error': f'Failed to save session: {str(e)}'}), 500, headers)
+
+
+def handle_get_sessions(request_json, headers):
+    """
+    Retrieve therapy sessions from Firestore for a given patient.
+    Expected payload: patient_id
+    Returns array of session records ordered by date descending.
+    """
+    if not db:
+        logging.warning("[GetSessions] Firestore not available — returning empty list")
+        return (jsonify({'sessions': []}), 200, headers)
+
+    try:
+        patient_id = request_json.get('patient_id')
+        if not patient_id:
+            return (jsonify({'error': 'patient_id is required'}), 400, headers)
+
+        sessions_ref = db.collection('sessions')
+        query = sessions_ref.where('patient_id', '==', str(patient_id)).order_by('date', direction=firestore.Query.DESCENDING)
+        docs = query.stream()
+
+        sessions = []
+        for doc in docs:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            # Convert Firestore timestamps to ISO strings for JSON serialization
+            if data.get('created_at') and hasattr(data['created_at'], 'isoformat'):
+                data['created_at'] = data['created_at'].isoformat()
+            sessions.append(data)
+
+        logging.info(f"[GetSessions] Retrieved {len(sessions)} sessions for patient {patient_id}")
+        return (jsonify({'sessions': sessions}), 200, headers)
+
+    except Exception as e:
+        logging.exception(f"[GetSessions] Error retrieving sessions: {e}")
+        return (jsonify({'error': f'Failed to retrieve sessions: {str(e)}'}), 500, headers)
+
+
+def handle_health_check(headers):
+    """
+    Health check that validates GCP authentication by making a lightweight Gemini API call.
+    Returns status with specific error details if auth is expired or misconfigured.
+    """
+    health = {
+        "status": "healthy",
+        "project": project_id or "NOT_SET",
+        "model_flash": constants.MODEL_NAME,
+        "model_pro": constants.MODEL_NAME_PRO,
+        "gcp_auth": "unknown",
+        "gcp_auth_detail": "",
+    }
+
+    # Check if project_id is set
+    if not project_id:
+        health["status"] = "unhealthy"
+        health["gcp_auth"] = "error"
+        health["gcp_auth_detail"] = "GOOGLE_CLOUD_PROJECT environment variable not set"
+        return (jsonify(health), 200, headers)
+
+    # Check if GenAI client exists
+    try:
+        if not client:
+            health["status"] = "unhealthy"
+            health["gcp_auth"] = "error"
+            health["gcp_auth_detail"] = "GenAI client failed to initialize"
+            return (jsonify(health), 200, headers)
+    except NameError:
+        health["status"] = "unhealthy"
+        health["gcp_auth"] = "error"
+        health["gcp_auth_detail"] = "GenAI client not defined"
+        return (jsonify(health), 200, headers)
+
+    # Test actual GCP auth by making a lightweight Gemini call
+    try:
+        test_response = client.models.generate_content(
+            model=constants.MODEL_NAME,
+            contents="Say hello",
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                max_output_tokens=10,
+            ),
+        )
+        # If we get here without an exception, auth is valid
+        health["gcp_auth"] = "valid"
+        health["gcp_auth_detail"] = "GCP credentials verified - Gemini API responding"
+    except Exception as e:
+        error_msg = str(e)
+        health["status"] = "unhealthy"
+        health["gcp_auth"] = "expired"
+        # Provide specific, actionable error messages
+        if "invalid_grant" in error_msg or "Refresh token has expired" in error_msg:
+            health["gcp_auth_detail"] = "OAuth token expired. Run: gcloud auth application-default login --workforce"
+        elif "PERMISSION_DENIED" in error_msg:
+            health["gcp_auth_detail"] = "Permission denied. Check project IAM roles for your account."
+        elif "Could not automatically determine credentials" in error_msg:
+            health["gcp_auth_detail"] = "No credentials found. Run: gcloud auth application-default login --workforce"
+        else:
+            health["gcp_auth_detail"] = f"GCP API error: {error_msg[:200]}"
+
+    logging.info(f"Health check: {health['status']} - GCP auth: {health['gcp_auth']}")
+    return (jsonify(health), 200, headers)
+
 
 def handle_segment_analysis(request_json, headers):
     """Handle real-time analysis of therapy session segments with streaming"""
@@ -700,7 +924,7 @@ def handle_comprehensive_analysis(analysis_prompt, phase, headers, job_id=None, 
                 parts=[types.Part(text=analysis_prompt)]
             )]
             
-            # COMPREHENSIVE configuration for full analysis
+            # COMPREHENSIVE configuration for full analysis — optimized for speed
             thinking_budget = 8192  # Moderate complexity for balanced analysis
 
             # Determine if we need more complex reasoning
@@ -708,8 +932,12 @@ def handle_comprehensive_analysis(analysis_prompt, phase, headers, job_id=None, 
                 thinking_budget = 24576  # Maximum for critical situations
 
             config = types.GenerateContentConfig(
-                temperature=0.3,
-                max_output_tokens=4096,
+                temperature=0.1,  # Near-deterministic for speed + consistency
+                max_output_tokens=4096,  # Thinking tokens count against this limit — need headroom
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=thinking_budget,
+                    include_thoughts=False
+                ),
                 safety_settings=[
                     types.SafetySetting(
                         category="HARM_CATEGORY_HARASSMENT",
@@ -822,9 +1050,9 @@ def handle_comprehensive_analysis(analysis_prompt, phase, headers, job_id=None, 
                     model=constants.MODEL_NAME_PRO,
                     analysis_type="comprehensive",
                     prompt_name="COMPREHENSIVE_ANALYSIS_PROMPT",
-                    temperature=0.3,
-                    max_output_tokens=4096,
-                    thinking_budget=None,  # disabled for RAG compatibility
+                    temperature=0.1,
+                    max_output_tokens=2048,
+                    thinking_budget=thinking_budget,
                     rag_tools=_comp_tool_names,
                     start_time=comp_start,
                     ttft=comp_ttft,
@@ -846,9 +1074,9 @@ def handle_comprehensive_analysis(analysis_prompt, phase, headers, job_id=None, 
                         model=constants.MODEL_NAME_PRO,
                         analysis_type="comprehensive",
                         prompt_name="COMPREHENSIVE_ANALYSIS_PROMPT",
-                        temperature=0.3,
-                        max_output_tokens=4096,
-                        thinking_budget=None,
+                        temperature=0.1,
+                        max_output_tokens=2048,
+                        thinking_budget=thinking_budget,
                         rag_tools=_comp_tool_names,
                         start_time=comp_start,
                         ttft=comp_ttft,
@@ -900,7 +1128,7 @@ def handle_pathway_guidance(request_json, headers):
             max_output_tokens=2048,
             tools=pathway_rag_tools,
             thinking_config=types.ThinkingConfig(
-                thinking_budget=24576,  # Complex clinical reasoning
+                thinking_budget=8192,  # Focused clinical reasoning — optimized for speed
                 include_thoughts=False
             ),
             safety_settings=[
@@ -1008,11 +1236,11 @@ def handle_session_summary(request_json, headers):
         summary_rag_tools = get_rag_tools_for_session(session_context, is_realtime=True)
 
         config = types.GenerateContentConfig(
-            temperature=0.3,
+            temperature=0.2,  # Consistent, slightly creative for homework/recommendations
             max_output_tokens=4096,
             tools=summary_rag_tools,
             thinking_config=types.ThinkingConfig(
-                thinking_budget=16384,  # Moderate complexity for summary
+                thinking_budget=8192,  # Structured extraction — optimized for speed
                 include_thoughts=False
             ),
             safety_settings=[

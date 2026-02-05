@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -31,9 +31,13 @@ import Patient from './Patient';
 import LoginPage from './LoginPage';
 import { useAuth } from '../contexts/AuthContext';
 import { mockPatients } from '../utils/mockPatients';
+import { Patient as PatientType } from '../types/types';
 
 const App: React.FC = () => {
   const { currentUser } = useAuth();
+
+  // Lifted patient state — initialized from mock data, updated in-memory on session save
+  const [patients, setPatients] = useState<PatientType[]>(mockPatients);
 
   // Navigation state
   const [currentView, setCurrentView] = useState<'landing' | 'patients' | 'schedule' | 'newSession' | 'patient' | 'therSummary'>('landing');
@@ -49,6 +53,31 @@ const App: React.FC = () => {
   if (!currentUser) {
     return <LoginPage />;
   }
+
+  // Callback when a session is saved — updates in-memory patient list for instant nav
+  const handleSessionSaved = useCallback((session: { id: string; date: string; duration: string; summary: string }) => {
+    if (!sessionPatientId) return;
+
+    setPatients(prev => prev.map(p => {
+      if (p.id !== sessionPatientId) return p;
+
+      const durationMin = parseInt(session.duration, 10) || 0;
+      const newSession = {
+        id: session.id,
+        date: session.date,
+        duration: durationMin,
+        summary: session.summary,
+      };
+
+      return {
+        ...p,
+        lastVisit: session.date,
+        sessionHistory: [...(p.sessionHistory || []), newSession],
+      };
+    }));
+
+    console.log('[App] Session saved for patient', sessionPatientId, '— updated in-memory patient list');
+  }, [sessionPatientId]);
 
   // Navigation handlers
   const pushToHistory = (view: typeof currentView, patientId?: string | null) => {
@@ -113,8 +142,9 @@ const App: React.FC = () => {
 
   if (currentView === 'patients') {
     return (
-      <Patients 
-        onNavigateBack={handleGoBack} 
+      <Patients
+        patients={patients}
+        onNavigateBack={handleGoBack}
         onNavigateToNewSession={handleNavigateToNewSession}
         onNavigateToPatient={handleNavigateToPatient}
       />
@@ -123,7 +153,8 @@ const App: React.FC = () => {
 
   if (currentView === 'patient' && selectedPatientId) {
     return (
-      <Patient 
+      <Patient
+        patients={patients}
         patientId={selectedPatientId}
         onNavigateBack={handleGoBack}
         onNavigateToNewSession={handleNavigateToNewSession}
@@ -193,7 +224,7 @@ const App: React.FC = () => {
 
   if (currentView === 'therSummary') {
     const summaryPatientName = sessionPatientId
-      ? mockPatients.find(p => p.id === sessionPatientId)?.name || 'Session Summary'
+      ? patients.find(p => p.id === sessionPatientId)?.name || 'Session Summary'
       : 'Session Summary';
     return (
       <TherSummary
@@ -217,7 +248,13 @@ const App: React.FC = () => {
   }
 
   // NewSession view - render the therapy session component
-  return <NewTherSession onNavigateBack={handleGoBack} patientId={sessionPatientId} />;
+  return (
+    <NewTherSession
+      onNavigateBack={handleGoBack}
+      patientId={sessionPatientId}
+      onSessionSaved={handleSessionSaved}
+    />
+  );
 };
 
 export default App;

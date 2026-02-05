@@ -18,6 +18,7 @@ import { ThemeProvider } from '@mui/material/styles'
 import CssBaseline from '@mui/material/CssBaseline'
 import App from './components/App'
 import PasswordGate from './components/PasswordGate'
+import ErrorBoundary from './components/ErrorBoundary'
 import { theme } from './styles/theme'
 import { AuthProvider } from './contexts/AuthContext'
 import './styles/global.css'
@@ -28,7 +29,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <AuthProvider>
         <ThemeProvider theme={theme}>
           <CssBaseline />
-          <App />
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
         </ThemeProvider>
       </AuthProvider>
     </PasswordGate>
