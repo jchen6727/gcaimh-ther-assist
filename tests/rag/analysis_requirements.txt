@@ -1,0 +1,13 @@
+# requirements for therapy-analysis-function
+functions-framework==3.5.0
+Flask==3.0.0
+google-genai==1.29.0
+google-cloud-logging==3.8.0
+firebase-admin==6.2.0
+python-dotenv==1.1.1
+# Dependencies for RAG datastore setup scripts
+google-auth>=2.41.1
+google-auth-httplib2>=0.2.0
+google-cloud-storage>=3.4.1
+requests>=2.32.5
+PyPDF2>=3.0.1

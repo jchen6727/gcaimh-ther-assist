@@ -46,9 +46,9 @@ import {
   Delete,
 } from '@mui/icons-material';
 import { Patient as PatientType, SessionHistory } from '../types/types';
-import { mockPatients } from '../utils/mockPatients';
 
 interface PatientProps {
+  patients: PatientType[];
   patientId: string;
   onNavigateBack: () => void;
   onNavigateToNewSession: (patientId?: string) => void;
@@ -57,8 +57,8 @@ interface PatientProps {
 type SortableColumn = 'date' | 'duration' | 'summary';
 type SortDirection = 'asc' | 'desc';
 
-const Patient: React.FC<PatientProps> = ({ patientId, onNavigateBack, onNavigateToNewSession }) => {
-  const patient = mockPatients.find(p => p.id === patientId);
+const Patient: React.FC<PatientProps> = ({ patients, patientId, onNavigateBack, onNavigateToNewSession }) => {
+  const patient = patients.find(p => p.id === patientId);
   const [sortColumn, setSortColumn] = useState<SortableColumn>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [sortedSessionHistory, setSortedSessionHistory] = useState<SessionHistory[]>([]);

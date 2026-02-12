@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = "gemini-2.5-flash"  # Used for realtime analysis (speed-critical)
+MODEL_NAME_PRO = "gemini-2.5-pro"  # Used for comprehensive, pathway guidance, and session summary
 
 # Phrases that trigger non-strict analysis
 TRIGGER_PHRASES = [
@@ -30,7 +31,7 @@ THERAPY_PHASES = {
 }
 
 # Prompts
-REALTIME_ANALYSIS_PROMPT = """Analyze this therapy segment for real-time guidance using a Cognitive Behavioral Therapy approach.
+REALTIME_ANALYSIS_PROMPT = """Analyze this therapy segment for real-time guidance using a {current_approach} approach.
 
 TRANSCRIPT (last few sentences):
 {transcript_text}
@@ -48,6 +49,7 @@ Categories available:
 - PATHWAY_CHANGE: Recommendations to consider switching therapeutic approaches
 - ENGAGEMENT: Continuation of therapeutic approach, therapeutic alliance, patient support
 - TECHNIQUE: Specific therapeutic interventions, skill suggestions
+- PROCESS: Therapeutic process observations, session dynamics, engagement patterns
 
 IMPORTANT DEDUPLICATION REQUIREMENTS:
 - The "PREVIOUS GUIDANCE" section above shows what guidance was recently displayed to the therapist
@@ -62,18 +64,20 @@ If guidance is needed, prioritize actionable guidance and return only the MOST R
 {{
     "alert": {{
         "timing": "now|pause|info",
-        "category": "safety|technique|pathway_change|engagement",
+        "category": "safety|technique|pathway_change|engagement|process",
         "title": "Brief descriptive title",
         "message": "Specific action or observation (1-3 sentences max)",
         "evidence": ["relevant quote(s) from the patient"],
-        "recommendation": ["Action 1 to take if applicable", "Action 2 to take if applicable", "Action 3 to take if applicable (max 3 items)"]
+        "recommendation": ["Action 1 to take if applicable", "Action 2 to take if applicable", "Action 3 to take if applicable (max 3 items)"],
+        "immediateActions": ["Specific step the therapist should take right now"],
+        "contraindications": ["What the therapist should avoid doing in this situation"]
     }}
 }}
 
 IMPORTANT NOTE:
 Always refer to the patient as 'patient'"""
 
-REALTIME_ANALYSIS_PROMPT_STRICT = """Analyze this therapy segment for CRITICAL guidance only using a Cognitive Behavioral Therapy approach.
+REALTIME_ANALYSIS_PROMPT_STRICT = """Analyze this therapy segment for CRITICAL guidance only using a {current_approach} approach.
 
 TRANSCRIPT (last few sentences):
 {transcript_text}
@@ -120,23 +124,26 @@ CRITICAL MOMENTS REQUIRING GUIDANCE:
 - Significant pattern recognition that changes treatment direction
 
 Categories (prefer any category other than the category of PREVIOUS GUIDANCE):
-- SAFETY: Catastrophic thoughts, addressing risk concerns, crisis situations, patient wellbeing, 
+- SAFETY: Catastrophic thoughts, addressing risk concerns, crisis situations, patient wellbeing
 - PATHWAY_CHANGE: Recommendations to consider switching therapeutic approaches
-- ENGAGEMENT: Continuation of therapeutic approach, theraputic alliance, patient support, 
+- ENGAGEMENT: Continuation of therapeutic approach, therapeutic alliance, patient support
 - TECHNIQUE: Specific therapeutic interventions, skill suggestions
+- PROCESS: Therapeutic process observations, session dynamics, engagement patterns
 
 Empty JSON format (use this most of the time):
 {{}}
 
-If an guidance is needed, prioritize actionable guidance and return only the MOST RELEVANT single piece of guidance. Format response as a valid JSON object:
+If guidance is needed, prioritize actionable guidance and return only the MOST RELEVANT single piece of guidance. Format response as a valid JSON object:
 {{
     "alert": {{
         "timing": "now|pause|info",
-        "category": "safety|technique|pathway_change|engagement",
+        "category": "safety|technique|pathway_change|engagement|process",
         "title": "Brief descriptive title",
         "message": "Specific action or observation (1-3 sentences max)",
         "evidence": ["direct quote showing the critical moment"],
-        "recommendation": ["Action 1 to take if applicable", "Action 2 to take if applicable", "Action 3 to take if applicable (max 3 items)"]
+        "recommendation": ["Action 1 to take if applicable", "Action 2 to take if applicable", "Action 3 to take if applicable (max 3 items)"],
+        "immediateActions": ["Specific step the therapist should take right now"],
+        "contraindications": ["What the therapist should avoid doing in this situation"]
     }}
 }}
 
@@ -149,8 +156,8 @@ Analyze this therapy session segment step by step:
 1. Check for any safety concerns (dissociation, panic, suicidal ideation)
 2. Evaluate therapeutic process metrics (engagement, alliance, techniques)
 3. Assess if current approach is effective or needs adjustment
-4. Search for similar patterns in clinical transcripts (Beck sessions, PTSD sessions)
-5. Reference EBT manuals for evidence-based protocols
+4. Search for similar patterns in clinical transcripts relevant to the current therapeutic approach
+5. Reference evidence-based manuals and protocols for the current modality
 6. Provide specific pathway guidance regardless of effectiveness
 </thinking>
 
@@ -168,10 +175,10 @@ CURRENT SESSION CONTEXT:
 TRANSCRIPT SEGMENT:
 {transcript_text}
 
-IMPORTANT: 
+IMPORTANT:
 - Look for similar patterns in the transcript database (e.g., "client resistance", "overwhelm", "not ready")
-- Reference EBT manual protocols with citations [1], [2], etc.
-- If you find a similar moment in Beck or PTSD sessions, mention how it was handled
+- Reference evidence-based manual protocols with citations [1], [2], etc.
+- If you find a similar moment in clinical transcripts, mention how it was handled
 - ALWAYS provide pathway guidance details (rationale, actions, contraindications) regardless of effectiveness
 
 Provide analysis with a JSON response only, no other text should exist besides the JSON. Format::
@@ -181,6 +188,7 @@ Provide analysis with a JSON response only, no other text should exist besides t
         "therapeutic_alliance": "weak|moderate|strong IMPORTANT: only return one of the provided options",
         "techniques_detected": ["technique1", "technique2"],
         "emotional_state": "calm|anxious|distressed|dissociated|engaged IMPORTANT: only return one of the provided options",
+        "arousal_level": "low|moderate|high|elevated IMPORTANT: only return one of the provided options",
         "phase_appropriate": true|false
     }},
     "pathway_indicators": {{
@@ -193,6 +201,13 @@ Provide analysis with a JSON response only, no other text should exist besides t
         "rationale": "Explanation with citations [1], [2] embedded in text",
         "immediate_actions": ["action1 with citation [3]", "action2"],
         "contraindications": ["contraindication1 [4]", "contraindication2"],
+        "alternative_pathways": [
+            {{
+                "approach": "Alternative approach name",
+                "reason": "Why this alternative with citations [5]",
+                "techniques": ["technique1", "technique2"]
+            }}
+        ]
     }}
 }}
 
@@ -270,7 +285,7 @@ Format as structured JSON:
         {{
             "task": "description",
             "rationale": "why",
-            "manual_reference": "CBT Manual p.X"
+            "manual_reference": "Treatment Manual p.X or protocol reference"
         }}
     ],
     "follow_up_recommendations": ["recommendation1", "recommendation2"],

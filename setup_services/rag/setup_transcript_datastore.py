@@ -22,16 +22,12 @@ to preserve conversational context and therapeutic patterns.
 import os
 import time
 import json
+import sys
 from google.auth import default
 from google.auth.transport.requests import Request
 import requests
 import PyPDF2
-
-# Configuration
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT")
-LOCATION = "global"
-DATASTORE_ID = "transcript-patterns"
-DISPLAY_NAME = "Clinical Therapy Transcripts"
+from . import constants
 
 def get_access_token():
     """Get access token for API calls."""
@@ -39,86 +35,60 @@ def get_access_token():
     credentials.refresh(Request())
     return credentials.token
 
-def create_datastore():
+def create_datastore(project_id: str, location: str, datastore_id: str, display_name: str):
     """Create a Vertex AI Search datastore with dialogue-aware chunking."""
     
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores?dataStoreId={DATASTORE_ID}"
+    url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/dataStores?dataStoreId={datastore_id}"
     
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
         "Content-Type": "application/json",
-        "X-Goog-User-Project": PROJECT_ID
+        "X-Goog-User-Project": project_id
     }
     
-    # Configure datastore with dialogue-aware chunking
     data = {
-        "displayName": DISPLAY_NAME,
+        "displayName": display_name,
         "industryVertical": "GENERIC",
         "solutionTypes": ["SOLUTION_TYPE_SEARCH"],
         "contentConfig": "CONTENT_REQUIRED",
         "documentProcessingConfig": {
-            # Enable document chunking optimized for dialogue
-            "chunkingConfig": {
-                "layoutBasedChunkingConfig": {
-                    "chunkSize": 300,  # Smaller chunks to capture 3-turn sequences
-                    "includeAncestorHeadings": True  # Include session context
-                }
-            },
-            # Use layout parser for better dialogue understanding
-            "defaultParsingConfig": {
-                "layoutParsingConfig": {}
-            }
+            "chunkingConfig": {"layoutBasedChunkingConfig": {"chunkSize": 300, "includeAncestorHeadings": True}},
+            "defaultParsingConfig": {"layoutParsingConfig": {}}
         }
     }
     
-    print(f"Creating datastore '{DATASTORE_ID}' with dialogue-aware chunking...")
+    print(f"Creating datastore '{datastore_id}' with dialogue-aware chunking...")
     
     response = requests.post(url, headers=headers, json=data)
     
     if response.status_code == 200:
-        print(f"✅ Datastore '{DATASTORE_ID}' created successfully!")
+        print(f"✅ Datastore '{datastore_id}' created successfully!")
         return response.json()
     elif response.status_code == 409:
-        print(f"⚠️  Datastore '{DATASTORE_ID}' already exists.")
-        return get_datastore()
+        print(f"⚠️  Datastore '{datastore_id}' already exists.")
+        return get_datastore(project_id, location, datastore_id)
     else:
-        print(f"❌ Error creating datastore: {response.status_code}")
-        print(f"Response: {response.text}")
         raise Exception(f"Failed to create datastore: {response.text}")
 
-def get_datastore():
+def get_datastore(project_id: str, location: str, datastore_id: str):
     """Get existing datastore details."""
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
-    
-    headers = {
-        "Authorization": f"Bearer {get_access_token()}",
-        "X-Goog-User-Project": PROJECT_ID
-    }
-    
+    url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{datastore_id}"
+    headers = {"Authorization": f"Bearer {get_access_token()}", "X-Goog-User-Project": project_id}
     response = requests.get(url, headers=headers)
-    
     if response.status_code == 200:
         return response.json()
-    else:
-        print(f"❌ Error getting datastore: {response.status_code}")
-        print(f"Response: {response.text}")
-        return None
+    return None
 
-def create_gcs_bucket():
+def create_gcs_bucket(project_id: str, bucket_name: str):
     """Create a GCS bucket for storing the transcript documents."""
     from google.cloud import storage
-    
-    bucket_name = f"{PROJECT_ID}-transcript-patterns"
-    client = storage.Client(project=PROJECT_ID)
-    
-    # Check if bucket already exists
+    client = storage.Client(project=project_id)
     try:
         bucket = client.get_bucket(bucket_name)
         print(f"⚠️  Bucket {bucket_name} already exists")
         return bucket_name
     except Exception as e:
         if "404" in str(e):
-            # Bucket doesn't exist, create it
             try:
                 bucket = client.create_bucket(bucket_name, location="US")
                 print(f"✅ Created GCS bucket: {bucket_name}")
@@ -126,7 +96,6 @@ def create_gcs_bucket():
             except Exception as create_error:
                 if "already own it" in str(create_error):
                     print(f"⚠️  Bucket {bucket_name} already exists")
-                    return bucket_name
                 else:
                     raise create_error
         else:
@@ -184,14 +153,11 @@ def process_pdf_transcript(pdf_path):
         print(f"⚠️  Error processing PDF {pdf_path}: {e}")
         return None
 
-def upload_transcripts_to_gcs(bucket_name):
+def upload_transcripts_to_gcs(project_id: str, bucket_name: str, transcripts_dir: str):
     """Upload transcript files to GCS bucket."""
     from google.cloud import storage
-    
-    client = storage.Client(project=PROJECT_ID)
+    client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
-    
-    transcripts_dir = "transcripts"  # Since we're running from backend/rag
     
     if not os.path.exists(transcripts_dir):
         print(f"❌ Transcripts directory '{transcripts_dir}' not found!")
@@ -232,11 +198,11 @@ def upload_transcripts_to_gcs(bucket_name):
     print(f"\n✅ Uploaded {files_uploaded} processed transcript files to GCS bucket")
     return True
 
-def create_pattern_library(bucket_name):
+def create_pattern_library(project_id: str, bucket_name: str):
     """Create a pattern library document with key therapeutic moments."""
     from google.cloud import storage
     
-    client = storage.Client(project=PROJECT_ID)
+    client = storage.Client(project=project_id)
     bucket = client.bucket(bucket_name)
     
     # Define key patterns from the transcripts
@@ -329,15 +295,15 @@ def create_pattern_library(bucket_name):
     print("✅ Created and uploaded therapeutic pattern library")
     return True
 
-def import_documents_to_datastore(bucket_name):
+def import_documents_to_datastore(project_id: str, location: str, datastore_id: str, bucket_name: str):
     """Import documents from GCS to the datastore."""
     
-    url = f"https://discoveryengine.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}/branches/0/documents:import"
+    url = f"https://discoveryengine.googleapis.com/v1/projects/{project_id}/locations/{location}/collections/default_collection/dataStores/{datastore_id}/branches/0/documents:import"
     
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
         "Content-Type": "application/json",
-        "X-Goog-User-Project": PROJECT_ID
+        "X-Goog-User-Project": project_id
     }
     
     # Configure import from GCS
@@ -357,20 +323,16 @@ def import_documents_to_datastore(bucket_name):
     response = requests.post(url, headers=headers, json=data)
     
     if response.status_code == 200:
-        operation = response.json()
-        print(f"✅ Import operation started: {operation['name']}")
-        return operation
+        return response.json()
     else:
-        print(f"❌ Error importing documents: {response.status_code}")
-        print(f"Response: {response.text}")
         raise Exception(f"Failed to import documents: {response.text}")
 
-def wait_for_operation(operation_name, timeout=600):
+def wait_for_operation(project_id: str, operation_name: str, timeout=600):
     """Wait for a long-running operation to complete."""
     
     headers = {
         "Authorization": f"Bearer {get_access_token()}",
-        "X-Goog-User-Project": PROJECT_ID
+        "X-Goog-User-Project": project_id
     }
     
     start_time = time.time()
@@ -398,91 +360,50 @@ def wait_for_operation(operation_name, timeout=600):
     print(f"❌ Operation timed out after {timeout} seconds")
     return False
 
-def update_backend_with_transcript_rag():
-    """Update the therapy analysis function to include transcript RAG tool."""
-    
-    datastore_path = f"projects/{PROJECT_ID}/locations/{LOCATION}/collections/default_collection/dataStores/{DATASTORE_ID}"
-    
-    print(f"\n📝 Transcript datastore path: {datastore_path}")
-    print("\n🔧 To enable dual-RAG in your backend, add this to backend/therapy-analysis-function/main.py:")
-    print("\n```python")
-    print("# Transcript Patterns RAG Tool")
-    print("TRANSCRIPT_RAG_TOOL = types.Tool(")
-    print("    retrieval=types.Retrieval(")
-    print("        vertex_ai_search=types.VertexAISearch(")
-    print(f'            datastore="{datastore_path}"')
-    print("        )")
-    print("    )")
-    print(")")
-    print("\n# Then add to your config:")
-    print("tools=[MANUAL_RAG_TOOL, TRANSCRIPT_RAG_TOOL]")
-    print("```")
-    
-    return datastore_path
-
 def main():
-    """Main function to set up the transcript RAG datastore."""
-    
+    if not constants.PROJECT_ID:
+        sys.exit(1)
+
     print(f"🚀 Setting up Vertex AI Search datastore for Clinical Transcripts")
-    print(f"Project ID: {PROJECT_ID}")
-    print(f"Datastore ID: {DATASTORE_ID}\n")
+    print(f"Project ID: {constants.PROJECT_ID}")
+    print(f"Datastore ID: {constants.TRANSCRIPT_DATASTORE_ID}\n")
     
     try:
-        # Create datastore with dialogue-aware chunking
-        datastore = create_datastore()
+        create_datastore(
+            project_id=constants.PROJECT_ID,
+            location=constants.TRANSCRIPT_LOCATION,
+            datastore_id=constants.TRANSCRIPT_DATASTORE_ID,
+            display_name=constants.TRANSCRIPT_DISPLAY_NAME
+        )
         
-        # Create GCS bucket
-        bucket_name = create_gcs_bucket()
+        bucket_name = create_gcs_bucket(constants.PROJECT_ID, constants.TRANSCRIPT_BUCKET_NAME)
         
-        # Process and upload transcript files
-        if upload_transcripts_to_gcs(bucket_name):
-            # Create pattern library
-            create_pattern_library(bucket_name)
+        if upload_transcripts_to_gcs(constants.PROJECT_ID, bucket_name, "transcripts"):
+            create_pattern_library(constants.PROJECT_ID, bucket_name)
             
-            # Import documents to datastore
-            operation = import_documents_to_datastore(bucket_name)
+            operation = import_documents_to_datastore(
+                project_id=constants.PROJECT_ID,
+                location=constants.TRANSCRIPT_LOCATION,
+                datastore_id=constants.TRANSCRIPT_DATASTORE_ID,
+                bucket_name=bucket_name
+            )
             
-            if operation:
-                # Wait for import to complete
-                if wait_for_operation(operation['name']):
-                    print("\n✅ Transcript RAG datastore setup complete!")
-                    
-                    # Show how to update backend
-                    datastore_path = update_backend_with_transcript_rag()
-                    
-                    print("\n📚 Your clinical transcript corpus has been:")
-                    print("   - Processed into dialogue sequences")
-                    print("   - Uploaded to GCS with pattern library")
-                    print("   - Imported into Vertex AI Search")
-                    print("   - Configured with dialogue-aware chunking (300 tokens)")
-                    print("   - Optimized for pattern matching")
-                    
-                    print("\n🎯 Key features:")
-                    print("   - 3-turn dialogue sequences preserved")
-                    print("   - Therapeutic patterns extracted")
-                    print("   - Beck CBT sessions indexed")
-                    print("   - PTSD/PE sessions indexed")
-                    print("   - JSON conversations processed")
-                    
-                    print("\nYou now have dual-RAG: manuals + real-world transcripts!")
-                else:
-                    print("\n⚠️  Import operation failed or timed out")
-                    print("Check the operation status in the Google Cloud Console")
+            if operation and wait_for_operation(constants.PROJECT_ID, operation['name']):
+                print("\n✅ Transcript RAG datastore setup complete!")
+            else:
+                print("\n⚠️  Import operation failed or timed out")
         
     except Exception as e:
         print(f"\n❌ Setup failed: {str(e)}")
         raise
 
 if __name__ == "__main__":
-    # Check for required libraries
     try:
-        import google.auth
-        from google.cloud import storage
         import PyPDF2
+        from google.cloud import storage
     except ImportError:
-        print("Installing required dependencies...")
-        os.system("pip install google-auth google-auth-httplib2 google-cloud-storage requests PyPDF2")
-        print("Dependencies installed. Please run the script again.")
-        exit(0)
+        print("Installing dependencies...")
+        os.system("pip install google-auth google-auth-httplib2 PyPDF2 requests google-cloud-storage")
+        sys.exit(0)
     
     main()

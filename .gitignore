@@ -25,6 +25,10 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+nul
+
+# Word temp files
+~$*
 
 # Logs
 *.log
@@ -32,6 +36,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
+
+# checkpointing
+**/transcript_upload_progress.json
 
 # Test coverage
 coverage/
@@ -70,6 +77,9 @@ rag-example/backend/rag/materials/Curriculum/**/*.mp4
 .firebase/*
 .firebaserc
 firebase-config-object.ts
+
+# Netlify
+.netlify/
 
 # Terraform
 # Local .terraform directories
@@ -116,4 +126,9 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+
+# Ignore all backup .bak files
 *.bak
+
+# Ignore all gcloud.json credentialing files across directories
+**/gcloud.json

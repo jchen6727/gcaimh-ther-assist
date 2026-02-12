@@ -1,0 +1,51 @@
+name: Python CI
+
+on:
+  push:
+    branches: [ "main", "develop" ] # Trigger on push to main or develop
+  pull_request:
+    branches: [ "main", "develop" ] # Trigger on pull request to main or develop
+
+permissions:
+  contents: 'read'
+  id-token: 'write'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [ "3.10" ] # Specify your project's python version
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r tests/rag/analysis_requirements.txt # Or your main requirements file
+        pip install pytest
+
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/<YOUR_PROJECT_NUMBER>/locations/global/workloadIdentityPools/<YOUR_POOL_ID>/providers/<YOUR_PROVIDER_ID>'
+        service_account: 'github-ci-runner@<YOUR_PROJECT_ID>.iam.gserviceaccount.com'
+
+    - name: Run Pytest
+      run: |
+        # The GOOGLE_CLOUD_PROJECT env var is often needed by the gcloud SDKs in tests
+        export GOOGLE_CLOUD_PROJECT=${{ steps.auth.outputs.project_id }}
+        pytest tests/rag/
+      env:
+        # Pass any other necessary environment variables to your tests here
+        # For example, if your tests need a specific datastore or bucket name
+        DATASTORE_ID: "ebt-corpus-sdk-metadata"
+        BUCKET_NAME: "${{ steps.auth.outputs.project_id }}-ebt-corpus"

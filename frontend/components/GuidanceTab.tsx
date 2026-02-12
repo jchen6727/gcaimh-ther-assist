@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import React from 'react';
-import { Box, Paper, Typography } from '@mui/material';
+import { Box, Paper, Typography, LinearProgress } from '@mui/material';
 import { HealthAndSafety, NaturePeople, Category, Exposure } from '@mui/icons-material';
 
 interface GuidanceTabProps {
@@ -33,9 +33,48 @@ interface GuidanceTabProps {
     }>;
   };
   onActionClick: (action: any, isContraindication: boolean) => void;
+  alerts?: any[];
+  transcript?: any[];
+  pathwayGuidance?: any;
+  sessionMetrics?: {
+    engagement_level: number;
+    therapeutic_alliance: string;
+    emotional_state: string;
+    arousal_level: string;
+  };
 }
 
-const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClick }) => {
+const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClick, sessionMetrics }) => {
+  const getEmotionalStateColor = (state: string) => {
+    switch (state) {
+      case 'calm': return '#128937';
+      case 'engaged': return '#0b57d0';
+      case 'anxious': return '#f59e0b';
+      case 'distressed': return '#ef4444';
+      case 'dissociated': return '#7c3aed';
+      default: return '#6b7280';
+    }
+  };
+
+  const getArousalColor = (level: string) => {
+    switch (level) {
+      case 'low': return '#3b82f6';
+      case 'moderate': return '#10b981';
+      case 'high': return '#f59e0b';
+      case 'elevated': return '#ef4444';
+      default: return '#6b7280';
+    }
+  };
+
+  const getAllianceColor = (alliance: string) => {
+    switch (alliance) {
+      case 'strong': return '#128937';
+      case 'moderate': return '#f59e0b';
+      case 'weak': return '#ef4444';
+      default: return '#6b7280';
+    }
+  };
+
   const getActionIcon = (iconType: string) => {
     switch (iconType) {
       case 'safety': return <HealthAndSafety sx={{ fontSize: 24, color: '#128937' }} />;
@@ -58,8 +97,8 @@ const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClic
         flexDirection: 'column',
         justifyContent: 'space-between',
         border: '1px solid #c4c7c5',
-        borderRadius: '16px',
-        minHeight: '120px',
+        borderRadius: '12px',
+        minHeight: '100px',
         cursor: 'pointer',
         '&:hover': {
           boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
@@ -67,26 +106,26 @@ const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClic
         transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, mb: 1 }}>
         {getActionIcon(action.icon)}
       </Box>
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-        <Typography 
-          variant="body1" 
-          sx={{ 
-            fontWeight: 600, 
-            fontSize: '16px', 
-            lineHeight: '24px',
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+        <Typography
+          variant="body1"
+          sx={{
+            fontWeight: 600,
+            fontSize: '14px',
+            lineHeight: '20px',
             color: '#1f1f1f',
           }}
         >
           {action.title}
         </Typography>
-        <Typography 
-          variant="body2" 
-          sx={{ 
-            fontSize: '14px', 
-            lineHeight: '20px',
+        <Typography
+          variant="body2"
+          sx={{
+            fontSize: '12px',
+            lineHeight: '18px',
             color: '#444746',
           }}
         >
@@ -97,18 +136,115 @@ const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClic
   );
 
   return (
-    <Box sx={{ 
+    <Box sx={{
       display: 'flex',
       flexDirection: 'column',
-      gap: 6,
-      pb: 4, // Add padding bottom to prevent cutoff
+      gap: 3,
+      pb: 2,
     }}>
-      <Typography 
-        variant="h6" 
-        sx={{ 
-          fontSize: '28px',
+      {/* Live Session Metrics */}
+      {sessionMetrics && (
+        <Box sx={{ display: 'flex', gap: 1.5 }}>
+          {/* Engagement Level */}
+          <Box sx={{
+            flex: 1,
+            p: 1.5,
+            border: '1px solid #e9ebf1',
+            borderRadius: '12px',
+            backgroundColor: '#fafbfd',
+            minWidth: 0,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography sx={{ fontSize: '10px', color: '#5f6368', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                Engagement
+              </Typography>
+              <Typography sx={{ fontWeight: 700, fontSize: '13px', color: '#1f1f1f', flexShrink: 0 }}>
+                {Math.round(sessionMetrics.engagement_level * 100)}%
+              </Typography>
+            </Box>
+            <LinearProgress
+              variant="determinate"
+              value={sessionMetrics.engagement_level * 100}
+              sx={{
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: '#e8eaed',
+                '& .MuiLinearProgress-bar': {
+                  borderRadius: 3,
+                  backgroundColor: sessionMetrics.engagement_level >= 0.7 ? '#128937' : sessionMetrics.engagement_level >= 0.4 ? '#f59e0b' : '#ef4444',
+                },
+              }}
+            />
+          </Box>
+
+          {/* Therapeutic Alliance */}
+          <Box sx={{
+            flex: 1,
+            p: 1.5,
+            border: '1px solid #e9ebf1',
+            borderRadius: '12px',
+            backgroundColor: '#fafbfd',
+            minWidth: 0,
+          }}>
+            <Typography sx={{ fontSize: '10px', color: '#5f6368', textTransform: 'uppercase', letterSpacing: '0.3px', mb: 0.5 }}>
+              Alliance
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: getAllianceColor(sessionMetrics.therapeutic_alliance), flexShrink: 0 }} />
+              <Typography sx={{ fontWeight: 600, fontSize: '13px', color: '#1f1f1f', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                {sessionMetrics.therapeutic_alliance}
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Emotional State */}
+          <Box sx={{
+            flex: 1,
+            p: 1.5,
+            border: '1px solid #e9ebf1',
+            borderRadius: '12px',
+            backgroundColor: '#fafbfd',
+            minWidth: 0,
+          }}>
+            <Typography sx={{ fontSize: '10px', color: '#5f6368', textTransform: 'uppercase', letterSpacing: '0.3px', mb: 0.5 }}>
+              Emotional State
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: getEmotionalStateColor(sessionMetrics.emotional_state), flexShrink: 0 }} />
+              <Typography sx={{ fontWeight: 600, fontSize: '13px', color: '#1f1f1f', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                {sessionMetrics.emotional_state}
+              </Typography>
+            </Box>
+          </Box>
+
+          {/* Arousal Level */}
+          <Box sx={{
+            flex: 1,
+            p: 1.5,
+            border: '1px solid #e9ebf1',
+            borderRadius: '12px',
+            backgroundColor: '#fafbfd',
+            minWidth: 0,
+          }}>
+            <Typography sx={{ fontSize: '10px', color: '#5f6368', textTransform: 'uppercase', letterSpacing: '0.3px', mb: 0.5 }}>
+              Arousal Level
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+              <Box sx={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: getArousalColor(sessionMetrics.arousal_level), flexShrink: 0 }} />
+              <Typography sx={{ fontWeight: 600, fontSize: '13px', color: '#1f1f1f', textTransform: 'capitalize', whiteSpace: 'nowrap' }}>
+                {sessionMetrics.arousal_level}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
+
+      <Typography
+        variant="h6"
+        sx={{
+          fontSize: '22px',
           fontWeight: 400,
-          lineHeight: '36px',
+          lineHeight: '30px',
           color: '#1f1f1f',
           whiteSpace: 'pre-line',
         }}
@@ -117,7 +253,7 @@ const GuidanceTab: React.FC<GuidanceTabProps> = ({ currentGuidance, onActionClic
       </Typography>
 
       {/* Action Cards */}
-      <Box sx={{ display: 'flex', gap: 4 }}>
+      <Box sx={{ display: 'flex', gap: 3 }}>
         {/* Immediate Actions */}
         <Box sx={{ flex: 1 }}>
           <Typography variant="body2" sx={{ 
