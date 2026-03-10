@@ -14,8 +14,14 @@ import time
 import json
 from google.cloud import discoveryengine_v1 as discoveryengine
 from google.cloud import storage
-from . import constants
-from . import utils
+import constants
+import utils
+
+ENDPOINTS = {
+    "us": "us-discoveryengine.googleapis.com",
+    "global": "discoveryengine.googleapis.com",
+    "eu": "eu-discoveryengine.googleapis.com",
+}
 
 def create_datastore(project_id: str, location: str, datastore_id: str, display_name: str):
     """Create a Vertex AI Search datastore using the Python SDK."""
