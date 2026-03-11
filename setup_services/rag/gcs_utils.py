@@ -85,33 +85,7 @@ def get_datastore(project_id, location, data_store_id):
         industry_vertical=discoveryengine.IndustryVertical.GENERIC,
         solution_types=[discoveryengine.SolutionType.SOLUTION_TYPE_SEARCH],
         content_config=discoveryengine.DataStore.ContentConfig.CONTENT_REQUIRED,
-        # KEY: Document processing config
-        document_processing_config=discoveryengine.DocumentProcessingConfig(
-            # Enable layout parsing
-            default_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig(
-                # Use OCR and layout parsing
-                ocr_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig.OcrParsingConfig(
-                    use_native_text=True,  # Use native PDF text when available
-                ),
-                # Layout-based parsing
-                layout_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig.LayoutParsingConfig()
-            ),
-            # Chunking configuration
-            chunking_config=discoveryengine.DocumentProcessingConfig.ChunkingConfig(
-                # Layout-based chunking
-                layout_based_chunking_config=discoveryengine.DocumentProcessingConfig.ChunkingConfig.LayoutBasedChunkingConfig(
-                    chunk_size=512,  # Target chunk size in tokens
-                    include_ancestor_headings=True,  # include heading for context
-                )
-            )
-            # parsing config overrides...
-            # if need custom handling for extensions...
-            #parsing_config_overrides={
-            #    "pdf": discoveryengine.DocumentProcessingConfig.ParsingConfig(),
-            #    "docx": discoveryengine.DocumentProcessingConfig.ParsingConfig(),
-            #    "html": discoveryengine.DocumentProcessingConfig.ParsingConfig(),
-            #}
-        )
+        document_processing_config=_CONFIG,
     )
 
     request = discoveryengine.CreateDataStoreRequest(
@@ -149,17 +123,7 @@ def set_parsing_config(project_id, location, data_store_id):
     data_store = client.get_data_store(name=data_store_name)
 
     # Update with parsing config
-    data_store.document_processing_config = discoveryengine.DocumentProcessingConfig(
-        default_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig(
-            layout_parsing_config=discoveryengine.DocumentProcessingConfig.ParsingConfig.LayoutParsingConfig()
-        ),
-        chunking_config=discoveryengine.DocumentProcessingConfig.ChunkingConfig(
-            layout_based_chunking_config=discoveryengine.DocumentProcessingConfig.ChunkingConfig.LayoutBasedChunkingConfig(
-                chunk_size=512,
-                include_ancestor_headings=True
-            )
-        )
-    )
+    data_store.document_processing_config = _CONFIG
 
     # Update
     update_mask = {"paths": ["document_processing_config"]}
