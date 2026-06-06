@@ -18,7 +18,8 @@ import {
   Autocomplete, Stack,
 } from '@mui/material';
 import {
-  ArrowBack, Assignment, Assessment, Publish, LibraryBooks, History, Add, Quiz,
+  ArrowBack, Assignment, Assessment, Publish, LibraryBooks, History, Add, Quiz, Timeline,
+  ShowChart,
 } from '@mui/icons-material';
 import { useTherapistBridge, TherapistClientBridgeProviderWrapper } from '../../../contexts/TherapistClientBridgeContext';
 import { BridgeClient, ModuleForAssignment, InterventionForAssignment, InterventionFrequency, QuestionnaireDefinition, QuestionnaireCadence } from '../../../types/therapistClientBridge';
@@ -28,6 +29,8 @@ import PublishPanel from './panels/PublishPanel';
 import ContentPanel from './panels/ContentPanel';
 import ActivityPanel from './panels/ActivityPanel';
 import QuestionnairesPanel from './panels/QuestionnairesPanel';
+import TimelinePanel from './panels/TimelinePanel';
+import TrendsPanel from './panels/TrendsPanel';
 
 // ---------------------------------------------------------------------------
 // Sub-components: Assign drawers
@@ -474,9 +477,11 @@ function PageInner({ clientId, clientName, onNavigateBack }: PageInnerProps) {
     { label: 'Plan',            icon: <Assignment sx={{ fontSize: 16 }} /> },
     { label: 'Questionnaires',  icon: <Quiz sx={{ fontSize: 16 }} /> },
     { label: 'Outcomes',        icon: <Assessment sx={{ fontSize: 16 }} /> },
+    { label: 'Trends',          icon: <ShowChart sx={{ fontSize: 16 }} /> },
     { label: 'Publish',         icon: <Publish sx={{ fontSize: 16 }} /> },
     { label: 'Content',         icon: <LibraryBooks sx={{ fontSize: 16 }} /> },
     { label: 'Activity',        icon: <History sx={{ fontSize: 16 }} /> },
+    { label: 'Timeline',        icon: <Timeline sx={{ fontSize: 16 }} /> },
   ];
 
   return (
@@ -576,15 +581,17 @@ function PageInner({ clientId, clientName, onNavigateBack }: PageInnerProps) {
             />
           )}
           {tab === 2 && <OutcomesPanel clientId={clientId} />}
-          {tab === 3 && <PublishPanel clientId={clientId} />}
-          {tab === 4 && (
+          {tab === 3 && <TrendsPanel clientId={clientId} />}
+          {tab === 4 && <PublishPanel clientId={clientId} />}
+          {tab === 5 && (
             <ContentPanel
               clientId={clientId}
               onAssignHomework={id => openAssignHomework(id)}
               onAssignIntervention={id => openAssignIntervention(id)}
             />
           )}
-          {tab === 5 && <ActivityPanel clientId={clientId} refreshKey={activityRefreshKey} />}
+          {tab === 6 && <ActivityPanel clientId={clientId} refreshKey={activityRefreshKey} />}
+          {tab === 7 && <TimelinePanel clientId={clientId} refreshKey={activityRefreshKey + planRefreshKey} />}
         </Card>
       </Box>
 

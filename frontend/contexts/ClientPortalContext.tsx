@@ -4,6 +4,19 @@ import {
   JournalEntry, ClientProgress, TherapySession, IntegrativeAnalysis,
   OutcomeMeasure, OutcomeResponse, OutcomeSchedule,
 } from '../types/clientPortal';
+import { createRealClientPortalProvider } from '../providers/ClientPortalRealProvider';
+import { createDummyClientPortalProvider } from '../providers/DummyClientPortalProvider';
+
+type ProviderMode = 'mock' | 'dummy' | 'real';
+
+function getProviderMode(): ProviderMode {
+  const v = (import.meta.env.VITE_USE_MOCK_PROVIDER as string | undefined)?.toLowerCase();
+  if (v === undefined) return 'mock';
+  if (v === 'true' || v === '1') return 'mock';
+  if (v === 'dummy') return 'dummy';
+  if (v === 'false' || v === '0' || v === 'real') return 'real';
+  return 'mock';
+}
 
 // ── Provider interface ──────────────────────────────────────────
 
@@ -293,9 +306,50 @@ const MOCK_OUTCOME_SCHEDULE: OutcomeSchedule = {
 
 // ── Mock provider implementation ────────────────────────────────
 
+const STORAGE_KEY = 'client-portal-mock-v1';
+
+interface MockStorage {
+  journals: JournalEntry[];
+  outcomeResponses: OutcomeResponse[];
+}
+
+function loadMockStorage(): MockStorage {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return { journals: [...mockJournalEntries], outcomeResponses: [...MOCK_OUTCOME_RESPONSES] };
+  }
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as MockStorage;
+      // If seed data has grown since last save, merge new seeds in (by id) so devs see new fixtures.
+      const journalIds = new Set(parsed.journals.map(j => j.id));
+      const responseIds = new Set(parsed.outcomeResponses.map(r => r.id));
+      return {
+        journals: [...parsed.journals, ...mockJournalEntries.filter(j => !journalIds.has(j.id))],
+        outcomeResponses: [...parsed.outcomeResponses, ...MOCK_OUTCOME_RESPONSES.filter(r => !responseIds.has(r.id))],
+      };
+    }
+  } catch (e) {
+    console.warn('[ClientPortalMock] Failed to parse localStorage, using seeds:', e);
+  }
+  return { journals: [...mockJournalEntries], outcomeResponses: [...MOCK_OUTCOME_RESPONSES] };
+}
+
+function saveMockStorage(data: MockStorage): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('[ClientPortalMock] Failed to write localStorage:', e);
+  }
+}
+
 function createMockProvider(): ClientPortalProvider {
-  let journals = [...mockJournalEntries];
-  let outcomeResponses = [...MOCK_OUTCOME_RESPONSES];
+  const initial = loadMockStorage();
+  let journals = initial.journals;
+  let outcomeResponses = initial.outcomeResponses;
+
+  const persist = () => saveMockStorage({ journals, outcomeResponses });
 
   return {
     async listModules() { return MOCK_MODULES; },
@@ -326,6 +380,7 @@ function createMockProvider(): ClientPortalProvider {
         const idx = journals.findIndex(j => j.id === entry.id);
         if (idx >= 0) {
           journals[idx] = { ...journals[idx], ...entry, updatedAt: now };
+          persist();
           return journals[idx];
         }
       }
@@ -342,6 +397,7 @@ function createMockProvider(): ClientPortalProvider {
         updatedAt: now,
       };
       journals = [newEntry, ...journals];
+      persist();
       return newEntry;
     },
 
@@ -365,6 +421,7 @@ function createMockProvider(): ClientPortalProvider {
         completedAt: new Date().toISOString(),
       };
       outcomeResponses = [newResp, ...outcomeResponses];
+      persist();
       return newResp;
     },
 
@@ -391,7 +448,15 @@ export function useClientPortal(): ClientPortalProvider {
 }
 
 export const ClientPortalProviderWrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const provider = React.useMemo(() => createMockProvider(), []);
+  const provider = React.useMemo(() => {
+    const mode = getProviderMode();
+    switch (mode) {
+      case 'dummy': return createDummyClientPortalProvider();
+      case 'real':  return createRealClientPortalProvider();
+      case 'mock':
+      default:      return createMockProvider();
+    }
+  }, []);
   return (
     <ClientPortalContext.Provider value={provider}>
       {children}

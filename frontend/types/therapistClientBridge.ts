@@ -36,6 +36,10 @@ export interface TherapistHomeworkItem {
   status: HomeworkBridgeStatus;
   note?: string;
   progress?: { lastOpenedAt?: string; completedAt?: string };
+  /** Session this homework was suggested by — set by Phase 5 auto-draft or therapist when assigning from a session summary. */
+  sourceSessionId?: string;
+  /** Date of the source session (denormalized for cheap timeline rendering). */
+  sourceSessionDate?: string;
 }
 
 // ---------------------------------------------------------------------------

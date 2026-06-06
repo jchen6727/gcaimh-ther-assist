@@ -45,8 +45,11 @@ import {
   Edit,
   Delete,
   OpenInNew,
+  MailOutline,
 } from '@mui/icons-material';
 import { Patient as PatientType, SessionHistory } from '../types/types';
+import InvitePatientDialog from './therapist/InvitePatientDialog';
+import PatientInvitationStatus from './therapist/PatientInvitationStatus';
 
 interface PatientProps {
   patients: PatientType[];
@@ -64,6 +67,8 @@ const Patient: React.FC<PatientProps> = ({ patients, patientId, onNavigateBack, 
   const [sortColumn, setSortColumn] = useState<SortableColumn>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [sortedSessionHistory, setSortedSessionHistory] = useState<SessionHistory[]>([]);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [invitationVersion, setInvitationVersion] = useState(0);  // force status chip re-render on invite
 
   const sessionHistory = patient?.sessionHistory || [];
 
@@ -264,7 +269,7 @@ const Patient: React.FC<PatientProps> = ({ patients, patientId, onNavigateBack, 
                   {patient.name}
                 </Typography>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
-                  <Chip 
+                  <Chip
                     label={getStatusLabel(patient.status)}
                     size="small"
                     sx={getStatusStyles(patient.status)}
@@ -272,8 +277,24 @@ const Patient: React.FC<PatientProps> = ({ patients, patientId, onNavigateBack, 
                   <Typography variant="body2" color="text.secondary">
                     Age {patient.age}
                   </Typography>
+                  <PatientInvitationStatus
+                    key={invitationVersion}
+                    patientId={patientId}
+                  />
                 </Box>
               </Box>
+              <Button
+                variant="outlined"
+                startIcon={<MailOutline />}
+                onClick={() => setInviteDialogOpen(true)}
+                sx={{
+                  borderRadius: 2,
+                  px: 2.5,
+                  py: 1.5,
+                }}
+              >
+                Invite to Portal
+              </Button>
               {onNavigateToClientPortal && (
                 <Button
                   variant="outlined"
@@ -555,6 +576,14 @@ const Patient: React.FC<PatientProps> = ({ patients, patientId, onNavigateBack, 
           </Box>
         </Paper>
       </Box>
+      <InvitePatientDialog
+        open={inviteDialogOpen}
+        onClose={() => setInviteDialogOpen(false)}
+        patientId={patientId}
+        patientName={patient.name}
+        defaultEmail={patient.contactInfo?.email || ''}
+        onInvited={() => setInvitationVersion(v => v + 1)}
+      />
     </Box>
   );
 };

@@ -248,7 +248,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
         const primaryConcern = topics[0] || 'General';
 
         // Infer session type / approach from focus topics
-        const topicsLower = patient.focusTopics.toLowerCase();
+        const topicsLower = patient.focusTopics?.toLowerCase() ?? '';
         let sessionType = 'CBT';
         let currentApproach = 'Cognitive Behavioral Therapy';
         if (topicsLower.includes('emdr')) {
@@ -287,8 +287,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
   });
   
   // Analysis tracking
-  const wordsSinceLastAnalysisRef = useRef(0);
-  const lastProcessedTranscriptIndexRef = useRef(-1);
+  const [wordsSinceLastAnalysis, setWordsSinceLastAnalysis] = useState(0);
   const [hasReceivedComprehensiveAnalysis, setHasReceivedComprehensiveAnalysis] = useState(false);
   
   // Analysis job ID tracking - counter to relate realtime and comprehensive results
@@ -842,48 +841,46 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
   useEffect(() => {
     if (!isRecording || transcript.length === 0) return;
 
+    const lastEntry = transcript[transcript.length - 1];
+    if (!lastEntry || lastEntry.is_interim) return;
+
     // Track when first transcript arrives (for time-based fallback)
     if (firstTranscriptTimeRef.current === null) {
       firstTranscriptTimeRef.current = Date.now();
     }
 
-    // Process all unprocessed final segments
-    const newWords = transcript.reduce((acc, entry, index) => {
-      // Only process final entries that we haven't seen yet
-      if (!entry.is_interim && index > lastProcessedTranscriptIndexRef.current) {
-        lastProcessedTranscriptIndexRef.current = index;
-        return acc + entry.text.split(' ').filter(word => word.trim()).length;
-      }
-      return acc;
-    }, 0);
+    // Count words in the new entry
+    const newWords = lastEntry.text.split(' ').filter(word => word.trim()).length;
 
-    if (newWords === 0) return;
+    setWordsSinceLastAnalysis(prev => {
+      const updatedWordCount = prev + newWords;
 
-    wordsSinceLastAnalysisRef.current += newWords;
+      // Trigger analysis every 8 words for responsive real-time guidance
+      const WORDS_PER_ANALYSIS = 8;
+      const TRANSCRIPT_WINDOW_MINUTES = 5;
 
-    // Trigger analysis every 8 words for responsive real-time guidance
-    const WORDS_PER_ANALYSIS = 8;
-    const TRANSCRIPT_WINDOW_MINUTES = 5;
+      if (updatedWordCount >= WORDS_PER_ANALYSIS) {
+        // Get last 5 minutes of transcript
+        const fiveMinutesAgo = new Date(Date.now() - TRANSCRIPT_WINDOW_MINUTES * 60 * 1000);
+        const recentTranscript = transcript
+          .filter(t => !t.is_interim && new Date(t.timestamp) > fiveMinutesAgo)
+          .map(t => ({
+            speaker: t.speaker || 'conversation',
+            text: t.text,
+            timestamp: t.timestamp
+          }));
 
-    if (wordsSinceLastAnalysisRef.current >= WORDS_PER_ANALYSIS) {
-      // Get last 5 minutes of transcript
-      const fiveMinutesAgo = new Date(Date.now() - TRANSCRIPT_WINDOW_MINUTES * 60 * 1000);
-      const recentTranscript = transcript
-        .filter(t => !t.is_interim && new Date(t.timestamp) > fiveMinutesAgo)
-        .map(t => ({
-          speaker: t.speaker || 'conversation',
-          text: t.text,
-          timestamp: t.timestamp
-        }));
+        if (recentTranscript.length > 0) {
+          firstAnalysisFiredRef.current = true;
+          triggerPairedAnalysis(recentTranscript, `Auto-analysis (${updatedWordCount} words)`);
+        }
 
-      if (recentTranscript.length > 0) {
-        firstAnalysisFiredRef.current = true;
-        triggerPairedAnalysis(recentTranscript, `Auto-analysis (${wordsSinceLastAnalysisRef.current} words)`);
+        // Reset word count
+        return 0;
       }
 
-      // Reset word count
-      wordsSinceLastAnalysisRef.current = 0;
-    }
+      return updatedWordCount;
+    });
   }, [transcript, isRecording, triggerPairedAnalysis]);
 
   // Time-based fallback: fire first analysis after 20s if word threshold hasn't been met
@@ -1138,7 +1135,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
       
       // Resume based on session type
       if (sessionType === 'microphone') {
-        await startMicrophoneRecording();
+        await resumeAudioStreaming();
       } else if (sessionType === 'audio') {
         await resumeAudioStreaming();
       } else if (sessionType === 'test') {
@@ -1151,7 +1148,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
       
       // Pause based on session type
       if (sessionType === 'microphone') {
-        await stopStreaming();
+        pauseAudioStreaming();
       } else if (sessionType === 'audio') {
         pauseAudioStreaming();
       } else if (sessionType === 'test') {
@@ -1555,7 +1552,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
 
   // Get alert category icon
   const getCategoryIcon = (category: string) => {
-    switch (category.toLowerCase()) {
+    switch (category?.toLowerCase()) {
       case 'safety':
         return <Shield sx={{ fontSize: 20, color: '#dc2626' }} />;
       case 'technique':
@@ -1662,7 +1659,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
                   Source: {activeSafetyAlert.citation}
                 </Typography>
               )}
-              {activeSafetyAlert.crisis_resources && activeSafetyAlert.crisis_resources.length > 0 && (
+              {Array.isArray(activeSafetyAlert.crisis_resources) && activeSafetyAlert.crisis_resources.length > 0 && (
                 <Box sx={{ display: 'flex', gap: 2, mt: 0.5, flexWrap: 'wrap' }}>
                   {activeSafetyAlert.crisis_resources.map((resource, idx) => (
                     <Chip
@@ -1811,37 +1808,7 @@ const NewTherSession: React.FC<NewTherSessionProps> = ({
               <BackendStatusIndicator />
             </Box>
 
-            {/* Navigation Menu */}
-            <Box>
-            {[
-              { key: 'guidance', label: 'Guidance', icon: <Explore sx={{ fontSize: 24, color: '#444746' }} /> },
-            ].map((item, idx, arr) => (
-                <Box
-                  key={item.key}
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    height: 44,
-                    px: 1.5,
-                    py: 0.5,
-                    cursor: 'pointer',
-                    backgroundColor: activeTab === item.key ? 'rgba(0, 0, 0, 0.04)' : 'transparent',
-                    '&:hover': {
-                      backgroundColor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                    borderBottom: idx < arr.length - 1 ? '1px solid rgba(196, 199, 197, 0.3)' : 'none',
-                  }}
-                  onClick={() => setActiveTab(item.key as any)}
-                >
-                  <Box sx={{ mr: 1.5, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {activeTab === item.key ? item.icon : null}
-                  </Box>
-                  <Typography variant="body1" sx={{ fontSize: '18px', color: '#1f1f1f' }}>
-                    {item.label}
-                  </Typography>
-                </Box>
-              ))}
-            </Box>
+            {/* Navigation removed — guidance shown directly */}
 
             {/* LLM Activity Log - hidden per Salvador's feedback */}
           </Box>

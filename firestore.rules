@@ -1,0 +1,38 @@
+rules_version = '2';
+
+// TherAssist Firestore Security Rules.
+//
+// The backend Cloud Functions use the Firebase Admin SDK which BYPASSES these rules
+// (admin SDK has full access). These rules serve as defense-in-depth against any
+// direct client-side access using the JS Firebase SDK.
+//
+// Default policy: DENY all reads and writes. Allow specific narrow paths only.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny — every match must explicitly allow.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ── Catalog: any authenticated user may READ. Writes blocked (seed via Admin SDK). ──
+    match /modules/{moduleId} {
+      allow read: if request.auth != null;
+    }
+    match /interventions/{interventionId} {
+      allow read: if request.auth != null;
+    }
+    match /questionnaireDefinitions/{defId} {
+      allow read: if request.auth != null;
+    }
+
+    // ── Own user document: read self only ──
+    match /users/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // All /patients/* access goes through the backend API.
+    // No client-direct rules — denied by default.
+  }
+}

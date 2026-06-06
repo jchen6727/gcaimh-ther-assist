@@ -1,0 +1,57 @@
+# Cloud Build job that tests portal endpoints from INSIDE GCP (bypasses external ingress).
+# All shell-vars use $$ to escape Cloud Build's substitution syntax.
+steps:
+  - name: gcr.io/cloud-builders/curl
+    id: 'test-portal-endpoints'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        BASE=https://storage-access-420536872556.us-central1.run.app
+        THERAPIST="dev-therapist-mohsin.sardar@downstate.edu"
+        PATIENT="dev-patient-jane.doe@example.com"
+
+        run() {
+          local name="$$1"; shift
+          echo "=== $$name ==="
+          local result
+          result=$$(curl -s -w "HTTP:%{http_code}" "$$@")
+          local http=$$(echo "$$result" | grep -oE 'HTTP:[0-9]+' | tail -1 | cut -d: -f2)
+          local body=$$(echo "$$result" | sed 's/HTTP:[0-9]*$$//')
+          echo "  status=$$http"
+          echo "  body: $$(echo "$$body" | head -c 400)"
+          echo ""
+        }
+
+        # ── Catalog ───────────────────────────────────────────────
+        run "T1 GET catalog/modules" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/catalog/modules"
+        run "T2 GET catalog/interventions" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/catalog/interventions"
+        run "T3 GET catalog/questionnaires" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/catalog/questionnaires"
+
+        # ── Therapist endpoints ──────────────────────────────────
+        run "T4 GET clients" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients"
+        run "T5 GET clients/X/homework" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients/patient-test-001/homework"
+        run "T6 POST clients/X/homework" -X POST -H "Authorization: Bearer $$THERAPIST" -H "Content-Type: application/json" \
+          -d '{"moduleId":"mod-avoidance","moduleTitle":"The Avoidance Trap","moduleCategory":"D","estimatedMinutes":8,"note":"test"}' \
+          "$$BASE/portal/clients/patient-test-001/homework"
+        run "T7 GET clients/X/homework after POST" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients/patient-test-001/homework"
+        run "T8 GET clients/X/overview" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients/patient-test-001/overview"
+        run "T9 GET clients/X/sessions" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients/patient-test-001/sessions"
+
+        # ── Patient self-service ─────────────────────────────────
+        run "P1 GET me/dashboard" -H "Authorization: Bearer $$PATIENT" "$$BASE/portal/me/dashboard"
+        run "P2 GET me/homework" -H "Authorization: Bearer $$PATIENT" "$$BASE/portal/me/homework"
+        run "P3 POST me/journal" -X POST -H "Authorization: Bearer $$PATIENT" -H "Content-Type: application/json" \
+          -d '{"keyInsights":"Test entry","personalApplication":"Testing","discussionTopics":"None"}' \
+          "$$BASE/portal/me/journal"
+        run "P4 GET me/journal" -H "Authorization: Bearer $$PATIENT" "$$BASE/portal/me/journal"
+        run "P5 GET me/outcome-measures" -H "Authorization: Bearer $$PATIENT" "$$BASE/portal/me/outcome-measures"
+
+        # ── Negative tests ───────────────────────────────────────
+        run "N1 no auth (expect 401)" "$$BASE/portal/catalog/modules"
+        run "N2 patient hits therapist (expect 403)" -H "Authorization: Bearer $$PATIENT" "$$BASE/portal/clients"
+        run "N3 therapist hits unowned patient (expect 403)" -H "Authorization: Bearer $$THERAPIST" "$$BASE/portal/clients/patient-not-owned/homework"
+
+        echo "=== END OF TESTS ==="
+
+timeout: 600s

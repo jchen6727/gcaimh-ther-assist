@@ -19,6 +19,10 @@ export interface HomeworkAssignment {
     completedAt?: string;
     percentComplete?: number;
   };
+  /** ID of the therapy session this homework was originally suggested by. */
+  sourceSessionId?: string;
+  /** Date of that source session — denormalized for cheap UI display. */
+  sourceSessionDate?: string;
 }
 
 // ── Psychoeducation Modules ─────────────────────────────────────

@@ -80,13 +80,22 @@ def storage_access(request):
     """
     HTTP Cloud Function to access Google Cloud Storage files.
     Provides secure access to citation documents stored in GCS.
+
+    Also routes /portal/* requests to the patient/therapist portal API
+    (see portal/router.py).
     """
-    
+
+    # ── Route portal requests ────────────────────────────────────────
+    path = request.path or ''
+    if path.startswith('/portal/'):
+        from portal.router import handle_portal_request
+        return handle_portal_request(path)
+
     # CORS handling
     if request.method == 'OPTIONS':
         headers = {
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
             'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
         }

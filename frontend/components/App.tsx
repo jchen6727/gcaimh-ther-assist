@@ -32,6 +32,7 @@ import Patient from './Patient';
 import LoginPage from './LoginPage';
 import { ClientApp } from './client/ClientApp';
 import ClientPortalManagementPage from './therapist/clientPortal/ClientPortalManagementPage';
+import PatientFirstTimeSignIn from './client/PatientFirstTimeSignIn';
 import SchedulingDashboard from './scheduling/SchedulingDashboard';
 import { useAuth } from '../contexts/AuthContext';
 import { mockPatients } from '../utils/mockPatients';
@@ -71,6 +72,12 @@ const App: React.FC = () => {
   const [lastSessionDuration, setLastSessionDuration] = useState(0);
   const [lastSessionId, setLastSessionId] = useState('');
 
+  // Patient first-time sign-in: detect ?patient=X&token=Y in URL
+  const [showPatientSignIn, setShowPatientSignIn] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.has('patient') && p.has('token');
+  });
+
   // Navigation state
   const [currentView, setCurrentView] = useState<'landing' | 'patients' | 'schedule' | 'newSession' | 'patient' | 'therSummary' | 'patientSummary' | 'clientPortal' | 'clientPortalManagement'>('landing');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
@@ -81,12 +88,8 @@ const App: React.FC = () => {
     sessionPatientId?: string | null;
   }>>([]);
 
-  // If user is not authenticated, show login page
-  if (!currentUser) {
-    return <LoginPage />;
-  }
-
-  // Callback when a session is saved — updates in-memory patient list and stores full summary
+  // Callback when a session is saved — updates in-memory patient list and stores full summary.
+  // Declared BEFORE early returns so React's hook count is stable across all render paths.
   const handleSessionSaved = useCallback((session: {
     id: string;
     date: string;
@@ -123,6 +126,27 @@ const App: React.FC = () => {
 
     console.log('[App] Session saved for patient', sessionPatientId, '— updated in-memory patient list');
   }, [sessionPatientId]);
+
+  // Patient magic-link sign-in flow — must run BEFORE normal auth gate
+  if (showPatientSignIn) {
+    return (
+      <PatientFirstTimeSignIn
+        onContinueToPortal={() => {
+          // Clear ?patient=&token= from URL and route into ClientApp
+          const url = new URL(window.location.href);
+          url.search = '';
+          window.history.replaceState({}, '', url.toString());
+          setShowPatientSignIn(false);
+          setCurrentView('clientPortal');
+        }}
+      />
+    );
+  }
+
+  // If user is not authenticated, show login page
+  if (!currentUser) {
+    return <LoginPage />;
+  }
 
   // Navigation handlers
   const pushToHistory = (view: typeof currentView, patientId?: string | null) => {

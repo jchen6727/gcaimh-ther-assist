@@ -514,11 +514,11 @@ export const ProgressPage: React.FC<ProgressPageProps> = ({ onNavigateBack }) =>
       >
         {activeMeasure && (
           <>
-            <DialogTitle>
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            <DialogTitle component="div">
+              <Typography variant="h6" component="div" sx={{ fontWeight: 600 }}>
                 {activeMeasure.shortName} &nbsp;·&nbsp; Week of {formatWeekLabel(currentWeek)}
               </Typography>
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" component="div" color="text.secondary">
                 {dialogStep === 'fill'
                   ? `${formAnswers.filter((v) => v >= 0).length} of ${activeMeasure.items.length} answered`
                   : 'Submitted'}
