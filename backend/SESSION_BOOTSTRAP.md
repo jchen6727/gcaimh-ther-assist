@@ -203,9 +203,28 @@ Every LLM response from Service 2 already returns `_diagnostics`. The Tier 2 ins
 
 This path is triggered when the LLM output is cut off by `max_output_tokens`. The repair logic closes unclosed braces/brackets. This is important context for why the function must be tested under truncation — hitting the token limit on comprehensive analysis is a real production failure mode.
 
-### Context caching and RAG tools are mutually exclusive on the Pro model
+### Both cache systems are broken — see `cache.md` for the fix session
 
-In `handle_comprehensive_analysis()`: `cached_content_name = None if rag_tools else _get_or_refresh_cached_content()`. This means context caching is never active when modality-specific RAG is used, which is almost always. This is a known limitation flagged for future work: inject pre-fetched RAG as prompt text (like the realtime path does) to allow re-enabling context caching on the comprehensive path.
+A full investigation (2026-06-06) found that neither caching mechanism delivers value
+in production. Details and recommended fixes are in `CACHE_ANALYSIS_REPORT.md`. The
+dedicated implementation session is bootstrapped in `cache.md`.
+
+**Gemini context cache (comprehensive path):** Permanently disabled. Line 1375:
+`cached_content_name = None if rag_tools else _get_or_refresh_cached_content()`.
+Because `rag_tools` is always non-empty, `context_cache_hit` is always `False` and
+the intended ~75% Pro model input token savings are never realized.
+
+**RAG prefetch cache (realtime path):** ~0% hit rate. The cache key hashes the last
+500 characters of the transcript (≈ 36 seconds of speech at 130–150 wpm). Each
+analysis call is triggered by a new completed utterance, which always shifts the
+500-char window — the hash changes on every call. The 25-second TTL also fails
+independently: typical inter-call intervals (20–90 s per utterance) exceed the TTL.
+The stated "2–4 s" realtime latency assumes cache hits; actual latency is 3–11 s
+because `prefetch_rag_context()` blocks synchronously on every miss.
+
+**Implication for Tier 2 Step 3:** Still implement RAG latency instrumentation as
+specified — it documents the miss rate and makes cache behavior observable. But expect
+`cache_hit: false` on every response until the fixes in `cache.md` are applied.
 
 ### The `PublishDraft` → portal chain is the highest-risk integration
 

@@ -697,6 +697,52 @@ Edge cases:
   - risk_assessment is None → riskLabel absent from content
 ```
 
+<!-- #TODO: Create tests/service2/test_rag_cache.py — Priority 10, implement after cache.md fixes are applied -->
+#### Priority 10: `prefetch_rag_context()` cache hit/miss logic
+
+This test validates the cache key fix (last-200-word hash) and the TTL behavior.
+Do not implement until the Task 1 fix in `cache.md` is applied — the tests are written
+to assert the corrected behavior and will fail against the original code by design.
+
+```python
+# Fixture helpers (add to conftest.py):
+def make_transcript(word_count: int) -> str:
+    """Build a plausible transcript string of given word count."""
+    words = ["word"] * word_count
+    return " ".join(f"[00:{i:02d}] Speaker: {w}" for i, w in enumerate(words))
+```
+
+```
+test_cache_key_stability_across_short_utterance:
+  - Build a 250-word transcript.
+  - Record hash under new method (last 200-word query_text).
+  - Append a 5-word utterance (brief therapist acknowledgment).
+  - Assert hash is UNCHANGED (200-word window did not shift for a 5-word addition).
+  → Validates that the fix produces hits for short consecutive turns.
+
+test_cache_hit_returns_without_querying:
+  - Monkeypatch `_rag_cache` with a fresh entry (age < 90 s) and matching hash.
+  - Monkeypatch `_query_datastore` to raise AssertionError if called.
+  - Call `prefetch_rag_context()` — assert it returns the cached passages.
+  - Assert returned prefetch_meta["cache_hit"] == True.
+
+test_cache_miss_on_expired_ttl:
+  - Monkeypatch `_rag_cache` with a stale entry (age > 90 s), matching hash.
+  - Monkeypatch `_query_datastore` to return ["passage"].
+  - Call `prefetch_rag_context()` — assert `_query_datastore` was called.
+  - Assert returned prefetch_meta["cache_hit"] == False.
+
+test_cache_miss_on_hash_mismatch:
+  - Monkeypatch `_rag_cache` with a fresh entry but a different hash.
+  - Monkeypatch `_query_datastore` to return ["passage"].
+  - Assert `_query_datastore` was called (miss, not hit).
+
+test_prefetch_meta_shape:
+  - Call `prefetch_rag_context()` with a mocked `_query_datastore`.
+  - Assert returned tuple is (str, dict).
+  - Assert meta keys: cache_hit, rag_latency_ms, rag_query_words, passages_by_store.
+```
+
 ---
 
 ### 3.4 Service 3 — Pure Function Targets
@@ -916,6 +962,8 @@ The following metrics are **not currently in any I/O boundary** and must be adde
 
 **Implementation:** In `prefetch_rag_context()`, record and return `prefetch_elapsed` and the per-datastore passage counts. In `handle_realtime_analysis_with_retry()`, include these in the `diag` dict.
 
+**Note (2026-06-06):** Investigation confirmed the RAG prefetch cache has ~0% hit rate in production — the cache key (last 500 chars of transcript) shifts on every utterance at conversational speaking speed. Until the fixes in `cache.md` are applied, expect `cache_hit: false` and `prefetch_age_seconds: 0` on every realtime response. Instrumentation here is still valuable: it documents the miss rate and provides the data needed to validate the cache fix.
+
 <!-- #TODO: Implement rag_relevance_score() in eval/score_eval.py (not in main.py — scoring is eval-time only) -->
 **Automated relevance scoring (no human labeling needed):** After collecting the RAG passages and the LLM response, compute a simple lexical overlap score:
 ```python
@@ -1118,10 +1166,12 @@ Use the evaluation harness to drive iterative prompt changes. The `_diagnostics`
      → Add explicit "message must be 1-3 sentences; do not exceed 100 words" constraint.
 
 7. Check context_cache_hit on comprehensive path:
-   - If False consistently: _get_or_refresh_cached_content() is failing silently.
-     → Cache is disabled when rag_tools present. If modality always requires RAG tools,
-       context caching cannot be used on that path — remove the cache logic or disable RAG inline tools.
-     → Alternative: use pre-fetched RAG context (injected as prompt text) and re-enable caching.
+   - False consistently is EXPECTED and is an architectural issue, not a diagnostic failure.
+     The Gemini API forbids tools + cached_content in the same request. Since rag_tools is
+     always non-empty, the cache is permanently gated off at line 1375 of main.py.
+     → Do not chase this in prompt engineering. Fix is documented in CACHE_ANALYSIS_REPORT.md
+       Option 5: inject pre-fetched RAG as prompt text (removing inline tools) to re-enable
+       context caching and recover ~75% Pro model input token savings.
 ```
 
 #### Baseline comparison workflow
