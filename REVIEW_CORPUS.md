@@ -23,9 +23,9 @@ The central problem the user identified is correct: **a chunk from an RCT retrie
 
 ---
 
-### 2. `cbt-corpus` — CBT Research Papers (31 documents)
+### 2. `cbt-corpus` — CBT Research Papers and Manuals (34 documents)
 
-Every entry in `cbt_metadata.jsonl` is a research study. Type breakdown:
+`cbt_metadata.jsonl` contains 31 research studies plus 3 treatment manuals. Type breakdown:
 
 | `document_type` value | Count |
 |---|---|
@@ -35,12 +35,11 @@ Every entry in `cbt_metadata.jsonl` is a research study. Type breakdown:
 | `review_paper` | 1 |
 | `pilot_study` | 1 |
 | `study_protocol` | 1 |
-| `training_manual` | 0 |
-| `treatment_manual` | 0 |
+| `treatment_manual` | 3 |
 
-Representative titles: "Transdiagnostic CBT for Anxiety — RCT," "CBT via Telemedicine vs In-Person — Randomized Trial," "Coach-Guided App-Based CBT — Randomized Trial," "Brief Group CBT — Randomized Trial."
+Representative research titles: "Transdiagnostic CBT for Anxiety — RCT," "CBT via Telemedicine vs In-Person — Randomized Trial," "Coach-Guided App-Based CBT — Randomized Trial," "Brief Group CBT — Randomized Trial."
 
-**Assessment**: **Entirely inappropriate for real-time session guidance.** Chunks retrieved from these 31 papers will be drawn from participant exclusion criteria, CONSORT flow diagrams, regression tables, follow-up attrition rates, and discussion of effect sizes. None of this answers "patient is resisting the exposure hierarchy right now." The model's citation instruction is misleading: it will produce `[1]` citations that look authoritative but point to RCT methods sections.
+**Assessment**: The 3 treatment manuals are appropriate and provide the procedural content the prompt citation instruction implies. The 31 research studies are **inappropriate for real-time session guidance** — chunks retrieved from those papers will be drawn from participant exclusion criteria, CONSORT flow diagrams, regression tables, follow-up attrition rates, and effect size discussions. None of this answers "patient is resisting the exposure hierarchy right now." Because all 34 documents are mixed into one datastore without type filtering, the model has no way to preferentially retrieve from manuals rather than RCTs. The citation instruction is misleading when RCT methods sections are cited with the same `[1]`-style authority as a manual protocol.
 
 ---
 
@@ -70,16 +69,16 @@ No BA treatment manual (e.g., Lejuez's BATD manual or Martell's BA for Depressio
 
 ### 4. `dbt-corpus` — DBT Research (6 documents)
 
-| Filename (truncated) | Apparent type |
-|---|---|
-| A pilot randomized controlled trial of Dialectical.pdf | RCT |
-| A systematic review and meta.pdf | Meta-analysis |
-| Dialectical Behavior Therapy.pdf | **Possibly Linehan manual** |
-| Dialectical Behaviour Therapy.pdf | **Possibly Linehan manual** |
-| Randomized clinical trial of a brief.pdf | RCT |
-| Systematic Review Assessing the Efficacy.pdf | Systematic review |
+| Filename (truncated) | Full title | Type |
+|---|---|---|
+| A pilot randomized controlled trial of Dialectical.pdf | *(RCT, DBT for BPD)* | RCT |
+| A systematic review and meta.pdf | *(Systematic review of DBT efficacy)* | Systematic review |
+| Dialectical Behavior Therapy.pdf | "Dialectical Behavior Therapy for Adolescents with Bipolar Disorder: Results from a Pilot Randomized Trial" | RCT |
+| Dialectical Behaviour Therapy.pdf | "Dialectical Behaviour Therapy Improves Emotion Dysregulation Mainly in Binge Eating Disorder and Bulimia Nervosa: A Systematic Review and Meta-Analysis" | Meta-analysis |
+| Randomized clinical trial of a brief.pdf | *(Brief DBT, RCT)* | RCT |
+| Systematic Review Assessing the Efficacy.pdf | *(Systematic review of DBT)* | Systematic review |
 
-**Assessment**: Two documents have titles that may correspond to Linehan's foundational DBT texts, which are treatment manuals with procedural content. If so, these would be the only modality-specific manuals in any of the non-EBT datastores. The remaining four are research studies. Cannot verify content without reading the PDFs; the filenames are ambiguous.
+**Assessment**: All six documents are research studies. The two filenames that appeared ambiguous — "Dialectical Behavior Therapy.pdf" and "Dialectical Behaviour Therapy.pdf" — are confirmed to be, respectively, a pilot RCT in adolescent bipolar disorder and a meta-analysis on emotion dysregulation in eating disorders. Neither is Linehan's treatment manual or skills training manual. No procedural DBT content is present in this corpus. Zero documents tell a clinician how to conduct a chain analysis, run a diary card review, or teach distress tolerance skills mid-session.
 
 ---
 
@@ -144,11 +143,60 @@ This means a CBT session for social anxiety, a DBT session for BPD/self-harm, a 
 
 ---
 
-## Transcript Conversations Metadata — Tag Discoverability During a Session
+## Where RCT and Research Study Content Surfaces During a Session
 
-**Would these tags cause documents to be retrieved during non-PTSD sessions?**
+This is the central clinical risk question: can chunks from RCTs, meta-analyses, and review papers actually reach the therapist's screen? Yes — in **both** the realtime and comprehensive paths. The transcript corpus is a separate and narrower issue.
 
-Yes, and here is why.
+### Realtime Analysis Path (the live alert stream)
+
+The realtime path (`is_realtime=True`, handled by `handle_realtime_analysis_with_retry()`) does **not** use Vertex AI Search as an inline grounding tool. Instead, it runs a **background prefetch cache** (`prefetch_rag_context()`, `main.py` line 562) that queries the datastores independently and injects the results directly into the prompt text as a `CLINICAL EVIDENCE` block before the LLM call.
+
+The prefetch queries these datastores for every realtime call:
+
+| Session type | Datastores queried at every realtime call |
+|---|---|
+| CBT (default) | `ebt-corpus` + `safety-crisis` + `cbt-corpus` + `ba-corpus` |
+| DBT | `ebt-corpus` + `safety-crisis` + `dbt-corpus` |
+| IPT | `ebt-corpus` + `safety-crisis` + `ipt-corpus` |
+
+The prefetch uses the last ~200 words of the live transcript as the search query (`query_text = " ".join(words[-200:])`, line 598). It retrieves up to 3 extractive answers and 3 snippets per datastore, formats them as:
+
+```
+--- Evidence from cbt-corpus ---
+[cbt-corpus:1] <chunk text from RCT methods section>
+[cbt-corpus:2] <chunk text from efficacy table>
+...
+```
+
+and prepends this block to the realtime prompt (`REALTIME_ANALYSIS_PROMPT` or `REALTIME_ANALYSIS_PROMPT_STRICT`) under the label `CLINICAL EVIDENCE (from evidence-based therapy corpus — use these to ground your guidance)`.
+
+The consequence is direct: **during every realtime alert generation in a CBT session, the model receives and is instructed to use chunks drawn from the 31 research studies in `cbt-corpus` and 11 studies in `ba-corpus`.** A passage like "participants in the CBT arm showed significantly greater symptom reduction at 12-week follow-up (Cohen's d = 0.71, p < 0.001)" will be handed to Flash with the instruction to ground its guidance on it. Because the model cannot distinguish between a procedures section and a results section from injected text alone, it may incorporate this content into technique recommendations or cite it as clinical evidence.
+
+The cache TTL is 25 seconds (`RAG_CACHE_TTL_SECONDS = 25`). This means the same prefetched RCT passages are reused across multiple consecutive realtime calls within a 25-second window unless the transcript content changes. RCT content is not a rare edge case — it is a structural feature of every realtime call.
+
+### Comprehensive Analysis Path
+
+The comprehensive path (`is_realtime=False`) passes the modality-specific corpora as **inline Vertex AI Search grounding tools** (`rag_tools` list, line 920). Gemini retrieves from those datastores directly during generation. The `COMPREHENSIVE_ANALYSIS_PROMPT` explicitly instructs: "Reference evidence-based manual protocols with citations [1], [2]" and "Search for similar patterns in clinical transcripts." With 31 CBT research studies mixed into `cbt-corpus` alongside 3 treatment manuals, the model will retrieve from whichever documents are semantically closest to the transcript — which may well be a study on telephone-delivered CBT or an app-based CBT RCT if the session involves discussion of remote engagement.
+
+The comprehensive path additionally includes `transcript-patterns` (not present in realtime), introducing the cross-modality contamination risk described below.
+
+### Summary by Call Type
+
+| What fires | Path | RCT content present? | Mechanism |
+|---|---|---|---|
+| Live alert (every ~30s) | Realtime | **Yes** — always | Injected as `CLINICAL EVIDENCE` text block via prefetch cache |
+| Comprehensive segment analysis | Comprehensive | **Yes** | Inline Vertex AI Search grounding tools |
+| Pathway guidance | Uses `is_realtime=True` tools | **Yes** | Same prefetch mechanism as realtime |
+| Session summary | Uses `is_realtime=True` tools | **Yes** | Same prefetch mechanism as realtime |
+| ThousandVoicesOfTrauma transcripts | Comprehensive only | N/A | Inline grounding tool, excluded from realtime |
+
+---
+
+## Transcript Conversations Metadata — Tag Discoverability During Comprehensive Analysis
+
+**Would these tags cause PE/PTSD transcripts to surface during non-PTSD sessions?**
+
+Yes, in the comprehensive path only (realtime excludes `transcript-patterns`).
 
 Vertex AI Search uses **semantic similarity**, not structured field filtering. The `structData` fields (e.g., `exhibited_behaviors`, `session_topic`) are indexed and contribute to retrieval scoring, but the query is derived from the LLM prompt — specifically from `COMPREHENSIVE_ANALYSIS_PROMPT`, which includes the live transcript text.
 
@@ -164,9 +212,7 @@ These terms — especially "avoidance" and "self-blame" — are not PTSD-exclusi
 
 The `session_topic` values ("police brutality," "military combat experience," "natural disaster experience") are specific enough that they would NOT match a typical CBT-depression session, but `exhibited_behaviors` will.
 
-**Practical consequence**: During a comprehensive analysis of a CBT session for depression, the model may cite a PE/PTSD synthetic transcript as a matched "similar moment in clinical transcripts" — which is modality-mismatched and potentially misleading (PE techniques like imaginal exposure are contraindicated approaches in standard CBT for depression).
-
-Additionally, the transcript datastore is **not used in realtime analysis** (`get_rag_tools_for_session(is_realtime=True)` excludes `TRANSCRIPT_RAG_TOOL`, line 478 of `main.py`). It is only used in the comprehensive path. So this cross-modality contamination risk exists only in comprehensive analysis, not the live alert stream.
+**Practical consequence**: During a comprehensive analysis of a CBT-depression session, the model may cite a synthetic PE/PTSD transcript as a matched "similar moment in clinical transcripts." PE techniques — imaginal exposure, in-vivo hierarchy, prolonged imaginal reliving — are not only unhelpful for a CBT-depression patient, some are contraindicated. This cross-modality citation risk is bounded to the comprehensive path and does not affect the realtime alert stream.
 
 ---
 
@@ -220,24 +266,30 @@ The JSONL was **not generated from reading the conversation content** — all fi
 
 ## Summary Assessment
 
-| Corpus | Documents | Type Quality | Real-time Utility | Verdict |
-|---|---|---|---|---|
-| `ebt-corpus` | 4 | 2 manuals, 1 training, 1 reference list | ✓ | **Keep. Core of the stack.** |
-| `cbt-corpus` | 31 | All RCTs/studies | ✗ | **Replace or remove.** Needs CBT session manuals. |
-| `ba-corpus` | 11 | All RCTs/studies | ✗ | **Replace or remove.** Needs Lejuez/Martell BA manual. |
-| `dbt-corpus` | 6 | 2 possibly manuals, 4 studies | Partial | **Audit.** If two Linehan texts are present, keep those; remove studies. |
-| `ipt-corpus` | 10 | All RCTs/studies, 1 misclassified | ✗ | **Replace or remove.** Needs Weissman/Markowitz IPT manual. |
-| `safety-crisis` | 9 | All clinical protocols/instruments | ✓ | **Keep. Best-curated corpus.** |
-| `transcript-patterns` (Beck PDFs) | 2 | Annotated session transcripts | ✓ | **Keep.** |
-| `transcript-patterns` (ThousandVoicesOfTrauma) | 3,009 | Synthetic PE/PTSD only | ✗ for non-PE sessions | **Expand or isolate.** PTSD-only coverage contaminates non-PTSD comprehensive analyses. Restrict to `MODALITY_RAG_MAP["PE"]` or supplement with CBT/DBT/IPT/BA transcripts. |
+| Corpus | Documents | Type Quality | Surfaces in realtime? | Surfaces in comprehensive? | Verdict |
+|---|---|---|---|---|---|
+| `ebt-corpus` | 4 | 2 manuals, 1 training, 1 reference list | Yes — prefetch cache | Yes — inline tool | **Keep. Core of the stack.** |
+| `cbt-corpus` | 34 | 3 manuals + 31 RCTs/studies mixed | Yes — prefetch cache | Yes — inline tool | **Separate manuals from studies.** Mixed datastore means RCT chunks compete with manual chunks in every query. |
+| `ba-corpus` | 11 | All RCTs/studies | Yes — prefetch cache | Yes — inline tool | **Add BA manuals or remove.** All study content with no procedural material. |
+| `dbt-corpus` | 6 | All RCTs/meta-analyses (confirmed) | Yes — prefetch cache | Yes — inline tool | **Replace entirely.** No Linehan manual. Zero procedural content. |
+| `ipt-corpus` | 10 | All RCTs/studies, 1 misclassified | Yes — prefetch cache | Yes — inline tool | **Add IPT manual or remove.** Needs Weissman/Markowitz. |
+| `safety-crisis` | 9 | All clinical protocols/instruments | Yes — prefetch cache | Yes — inline tool | **Keep. Best-curated corpus.** |
+| `transcript-patterns` (Beck PDFs) | 2 | Annotated session transcripts | No — excluded from realtime | Yes — inline tool | **Keep.** |
+| `transcript-patterns` (ThousandVoicesOfTrauma) | 3,009 | Synthetic PE/PTSD only | No — excluded from realtime | Yes — inline tool | **Isolate to PE sessions.** Cross-modality contamination risk in comprehensive analysis. |
 
 ### The Core Fix
 
-The modality-specific corpora (`cbt-corpus`, `ba-corpus`, `ipt-corpus`, and partially `dbt-corpus`) need their RCTs replaced with or supplemented by actual treatment manuals. What is needed per modality:
+The most urgent problem is not the transcript corpus — it is that **RCT and meta-analysis chunks are injected into every realtime alert prompt** via the prefetch cache. A clinician managing a live patient receives guidance partially grounded in regression tables and efficacy follow-up data from `cbt-corpus`, `ba-corpus`, `dbt-corpus`, and `ipt-corpus` on every call.
 
-- **CBT**: Beck's Cognitive Therapy of Depression, Clark & Wells CBT for Social Phobia, Barlow Unified Protocol
+Two structural changes are needed:
+
+**1. Add treatment manuals to modality corpora.** What is needed per modality:
+
+- **CBT**: Beck's Cognitive Therapy of Depression, Clark & Wells CBT for Social Phobia, Barlow Unified Protocol (3 manuals in `cbt-corpus` are a start; the 31 studies should be separated into a research-only datastore not included in realtime)
 - **BA**: Lejuez BATD manual, Martell/Addis/Jacobson BA for Depression manual
-- **DBT**: Linehan's Skills Training Manual (already possibly present), DBT individual therapy manual
+- **DBT**: Linehan's Skills Training Manual, DBT individual therapy manual — confirmed absent from `dbt-corpus`
 - **IPT**: Weissman/Markowitz/Klerman Comprehensive Guide to Interpersonal Psychotherapy
 
-Without treatment manuals, the `rationale` and `immediate_actions` fields in `COMPREHENSIVE_ANALYSIS_PROMPT`'s output will cite RCTs — giving the clinician confidence-inflated references that actually contain experimental methods, not clinical technique.
+**2. Split research studies out of the realtime path.** RCT and meta-analysis documents have legitimate value for comprehensive analysis (informing the session summary's `alternate_therapy_paths` and `rationale` fields with efficacy evidence). They do not belong in the prefetch cache that drives realtime alerts. The cleanest fix is a separate `*-research` datastore for each modality that is excluded from `MODALITY_RAG_MAP` (and therefore from `prefetch_rag_context`) while remaining available for the comprehensive path.
+
+Without these changes, the `rationale` and `immediate_actions` fields in both `REALTIME_ANALYSIS_PROMPT` and `COMPREHENSIVE_ANALYSIS_PROMPT` output will cite RCTs with the same authority as treatment manual protocols — giving the clinician confidence-inflated references that describe experimental populations, not clinical technique.

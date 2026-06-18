@@ -80,9 +80,16 @@ Related constants in `backend/therapy-analysis-function/constants.py`:
 
 Implement in this order. Each task is independent of the others unless noted.
 
-### Task 1 — Fix RAG cache key + TTL (15 min, no risk)
+### Task 1 — Remove transcript hash from cache key + raise TTL (15 min, no risk)
 
-**Files:** `main.py` lines 503 and 569.
+⚠️ **Prior version of this task was incorrect.** It proposed changing the hash input
+from `transcript_text[-500:]` to the last-200-word query window. That change does not
+produce cache hits: any window computed over the tail of a growing transcript string
+changes on every trigger because new speech always appends at the tail. The correct
+fix is to remove the hash check entirely, leaving TTL as the sole invalidation
+mechanism. See `AUTOPSY_CACHE_FIX.md` for the full explanation.
+
+**Files:** `main.py` lines 503, 569, 575, and 622.
 
 ```python
 # Line 503: change
@@ -90,17 +97,27 @@ RAG_CACHE_TTL_SECONDS = 25
 # to
 RAG_CACHE_TTL_SECONDS = 90
 
-# Line 569: change
+# Line 569: DELETE this line entirely
 transcript_hash = str(hash(transcript_text[-500:] if len(transcript_text) > 500 else transcript_text))
-# to (compute query_text first, then hash it — align key with what's actually queried)
-words_for_hash = transcript_text.split()
-_hash_source = " ".join(words_for_hash[-200:]) if len(words_for_hash) > 200 else transcript_text
-transcript_hash = str(hash(_hash_source))
-```
 
-Note: `query_text` is already computed below line 569 (lines 586–587). You may
-refactor to compute it once and reuse rather than computing it twice — but do not
-alter the query itself, only the hash input.
+# Line 575: change the hit condition from
+if age < RAG_CACHE_TTL_SECONDS and cached["transcript_hash"] == transcript_hash:
+# to
+if age < RAG_CACHE_TTL_SECONDS:
+
+# Line 622: remove "transcript_hash" from the cache write dict
+# Change:
+_rag_cache[session_type] = {
+    "passages": formatted_context,
+    "timestamp": time.time(),
+    "transcript_hash": transcript_hash,
+}
+# to:
+_rag_cache[session_type] = {
+    "passages": formatted_context,
+    "timestamp": time.time(),
+}
+```
 
 ### Task 2 — Instrument `prefetch_rag_context()` to return metadata (1 h)
 
@@ -187,31 +204,26 @@ For Tasks 1 and 2, add to `backend/therapy-analysis-function/tests/test_rag_cach
 (new file, follows spec §3.3 patterns):
 
 ```
-test_cache_key_uses_query_window:
-  - Build a transcript of 250 words.
-  - Compute hash using old method (last 500 chars).
-  - Compute hash using new method (last 200 words as query text).
-  - Append a single short utterance (< 10 words).
-  - Assert new method: hash unchanged (200-word window didn't shift significantly).
-  - Assert old method: hash changed (500-char window shifted).
-  → Documents the fix is correct.
-
-test_cache_hit_within_ttl:
-  - Mock `_rag_cache` with a fresh entry (age < 90 s) and matching hash.
-  - Mock `_query_datastore` to raise if called (cache hit must not call it).
-  - Call `prefetch_rag_context()` — assert result matches cached passages.
+test_cache_hit_within_ttl_any_transcript:
+  - Mock `_rag_cache[session_type]` with a fresh entry (age < 90 s), any passage.
+  - Mock `_query_datastore` to raise AssertionError if called.
+  - Call `prefetch_rag_context()` twice with DIFFERENT transcript_text.
+  - Assert second call returns cached passages WITHOUT calling `_query_datastore`.
   - Assert returned `prefetch_meta["cache_hit"] == True`.
+  → Verifies TTL-only invalidation: transcript content does not affect hit/miss.
 
 test_cache_miss_on_expired_ttl:
-  - Mock `_rag_cache` with an old entry (age > 90 s) and matching hash.
+  - Mock `_rag_cache` with a stale entry (age > 90 s).
   - Mock `_query_datastore` to return a fixed passage.
   - Call `prefetch_rag_context()` — assert `_query_datastore` was called.
   - Assert returned `prefetch_meta["cache_hit"] == False`.
 
-test_cache_miss_on_hash_change:
-  - Mock `_rag_cache` with a fresh entry but mismatched hash.
-  - Mock `_query_datastore` to return a fixed passage.
-  - Assert `_query_datastore` was called (miss, not hit).
+test_cache_hit_rate_at_conversational_pace:
+  - Simulate 10 consecutive calls with transcript growing by 8 words each call
+    (matching the frontend 8-word trigger threshold).
+  - First call populates cache. Calls 2–10 arrive within 90 s of call 1.
+  - Assert calls 2–10 all return cache_hit == True.
+  → The scenario that previously produced 0% hit rate must now produce ~100%.
 ```
 
 ---
@@ -219,7 +231,9 @@ test_cache_miss_on_hash_change:
 ## 5. Definition of Done
 
 - [ ] `RAG_CACHE_TTL_SECONDS = 90` in `main.py`
-- [ ] `transcript_hash` computed from last-200-word query text, not last-500 chars
+- [ ] `transcript_hash` computation removed from `prefetch_rag_context()` (line 569 deleted)
+- [ ] Hit condition is `age < RAG_CACHE_TTL_SECONDS` only — no hash comparison (line 575)
+- [ ] Cache write dict no longer stores `transcript_hash` (line 622)
 - [ ] `prefetch_rag_context()` returns `(str, dict)` — call sites updated
 - [ ] `build_diagnostics()` accepts and emits `prefetch_meta` under `grounding.prefetch`
 - [ ] `_diagnostics.grounding.prefetch.cache_hit` appears in realtime responses
