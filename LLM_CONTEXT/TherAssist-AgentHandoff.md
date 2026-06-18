@@ -209,7 +209,7 @@ The cache key `hash(transcript[-500:])` invalidates on every trigger because the
 
 - **Option C1 — Time-only key:** Remove the transcript hash from the cache key entirely. Cache by `session_type` with the 25s TTL only. The RAG context will be refreshed every 25 seconds regardless of transcript changes. Acceptable if the RAG corpus is static clinical documents (which it is).
 - **Option C2 — Session-level pre-warm:** Move `prefetch_rag_context` out of the per-request path. Call it once at session start and refresh on a background timer. This requires the frontend to pass a persistent `session_id` to the analysis endpoint.
-- **Option C3 — Increase window size:** Change the hash input from `transcript[-500:]` to `transcript[-5000:]` (approximately the last 5 minutes of speech). This makes the cache hit on the many short-word triggers between speech events that don't change the significant transcript context.
+- ~~**Option C3 — Increase window size:** Change hash input to `transcript[-5000:]`.~~ **This approach is incorrect and must not be implemented.** Any window computed over the tail of a growing string changes on every trigger because new speech always appends at the tail. A larger window does not change this. Option C1 (time-only key) is the correct fix. See `AUTOPSY_CACHE_FIX.md` for the full analysis.
 
 **Token cost:** `main.py` (~22,500) + this document (~5,000) + output = ~32,000 tokens.
 

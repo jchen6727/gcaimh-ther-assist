@@ -99,7 +99,7 @@ characters to be identical between two successive calls, no new speech could hav
 occurred — which is exactly the precondition that prevents a new analysis call from
 being triggered.
 
-### Secondary design flaw — cache key and query window are mismatched
+### Secondary observation — cache key and query window are internally inconsistent
 
 The actual Discovery Engine query uses a wider window:
 
@@ -109,10 +109,15 @@ words = transcript_text.split()
 query_text = " ".join(words[-200:]) if len(words) > 200 else transcript_text
 ```
 
-200 words × ~6 chars/word ≈ **1,200 chars ≈ 86 seconds of speech**. Two consecutive
-calls where the 200-word query would retrieve nearly identical passages (stable clinical
-topic) may still produce different 500-char hashes and trigger a redundant fetch. The
-cache key shifts faster than the underlying query changes.
+The hash is computed over `transcript_text[-500:]` while the query uses the last 200
+words. These are different windows, which is internally inconsistent. However, **fixing
+this inconsistency by aligning the hash to the 200-word window does not resolve cache
+misses.** The 200-word window also includes the tail of the growing transcript string.
+Every trigger appends new words at the tail; those new words fall inside any window
+computed over the end of the string, regardless of how wide it is. The hash changes on
+every trigger whether the window is 500 chars or 200 words.
+
+This is a cosmetic inconsistency. It is not the root cause of the ~0% hit rate.
 
 ### Actual realtime latency
 
@@ -133,24 +138,32 @@ layer itself adds code complexity with no production benefit.
 
 ## Options
 
-### Option 1 — Fix the cache key to match the query window (15 min, low risk)
+### Option 1 — Remove the transcript hash from the cache key (15 min, low risk)
 
-Replace the 500-char slice with a hash of the actual `query_text` (last 200 words).
-The cache key then matches what's actually sent to Discovery Engine.
+⚠️ **Correction from prior analysis:** An earlier version of this document proposed
+aligning the hash with the 200-word query window. That fix does not work. Any hash
+computed over the tail of a growing transcript string changes on every trigger because
+new speech always appends at the tail — whether the window is 500 chars or 200 words.
+The correct fix is to remove the hash check entirely.
+
+Remove the `transcript_hash` computation and comparison from `prefetch_rag_context()`.
+Let the TTL alone control invalidation:
 
 ```python
-# main.py:569 — current
-transcript_hash = str(hash(transcript_text[-500:]))
+# main.py:569 — remove this line entirely:
+transcript_hash = str(hash(transcript_text[-500:] if len(transcript_text) > 500 else transcript_text))
 
-# proposed
-words = transcript_text.split()
-query_text_for_hash = " ".join(words[-200:]) if len(words) > 200 else transcript_text
-transcript_hash = str(hash(query_text_for_hash))
+# main.py:575 — change the hit condition from:
+if age < RAG_CACHE_TTL_SECONDS and cached["transcript_hash"] == transcript_hash:
+# to:
+if age < RAG_CACHE_TTL_SECONDS:
 ```
 
-The 200-word window (~86 s of speech) shifts more slowly than 500 chars (~36 s). Brief
-exchanges and acknowledgment turns are now more likely to hit. **This alone is
-insufficient** — the 25 s TTL still fails for most turn-taking intervals.
+Also remove `"transcript_hash": transcript_hash` from the cache write at line 622.
+
+The cache is then keyed solely by `session_type` with a TTL. The EBT corpus is static
+clinical documents; passages retrieved 25 seconds ago remain clinically valid. This
+is the minimal change that produces real cache hits.
 
 ---
 
@@ -222,7 +235,7 @@ structured field from the prefetch metadata, or dropped and acknowledged in the 
 
 | # | Action | Effort | Expected impact |
 |---|--------|--------|-----------------|
-| 1 | Options 1 + 2: fix cache key + raise TTL to 90 s | 15 min | Produces real hits on sustained conversations |
+| 1 | Options 1 + 2: remove transcript hash from cache key + raise TTL to 90 s | 15 min | Produces real hits on sustained conversations |
 | 2 | Instrument `_diagnostics.grounding` with `cache_hit`, `prefetch_age_seconds`, `rag_latency_ms` (Tier 2 Step 3) | 1 h | Makes cache behavior observable in the eval harness |
 | 3 | Option 5: fix Gemini context cache (inject RAG as text, drop inline tools on comprehensive path) | 2–4 h | Highest cost savings; eliminates Pro model input token waste |
 | 4 | Option 3: true background prefetch | 1–2 days | Best realtime latency ceiling |
@@ -238,7 +251,7 @@ Item 4 requires architectural coordination.
 | File | Line | Change |
 |------|------|--------|
 | `therapy-analysis-function/main.py` | 503 | `RAG_CACHE_TTL_SECONDS = 90` |
-| `therapy-analysis-function/main.py` | 569 | Hash `query_text` (last 200 words) not `transcript_text[-500:]` |
+| `therapy-analysis-function/main.py` | 569, 575, 622 | Remove `transcript_hash`; change hit condition to TTL-only; remove hash from cache write |
 | `therapy-analysis-function/main.py` | 562–628 | Return `(context, prefetch_meta)` tuple; thread metadata into `build_diagnostics()` (Tier 2 Step 3) |
 | `therapy-analysis-function/main.py` | 1375 | Unblock context cache by removing inline tools on comprehensive path (Option 5 — requires design decision) |
 

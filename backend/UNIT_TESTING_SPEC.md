@@ -700,9 +700,14 @@ Edge cases:
 <!-- #TODO: Create tests/service2/test_rag_cache.py — Priority 10, implement after cache.md fixes are applied -->
 #### Priority 10: `prefetch_rag_context()` cache hit/miss logic
 
-This test validates the cache key fix (last-200-word hash) and the TTL behavior.
-Do not implement until the Task 1 fix in `cache.md` is applied — the tests are written
-to assert the corrected behavior and will fail against the original code by design.
+This test validates the corrected cache behavior: TTL-only invalidation with no transcript
+hash. Do not implement until the Task 1 fix in `cache.md` is applied — the tests assert
+the corrected behavior (hash removed; TTL-only) and will fail against the original code.
+
+⚠️ **Prior version of these tests was incorrect.** `test_cache_key_stability_across_short_utterance`
+asserted that appending 5 words to a 250-word transcript left the 200-word hash unchanged.
+That assertion is false — the 200-word window includes the new tail words and the hash
+changes. The tests below reflect the corrected fix (no hash at all).
 
 ```python
 # Fixture helpers (add to conftest.py):
@@ -713,12 +718,12 @@ def make_transcript(word_count: int) -> str:
 ```
 
 ```
-test_cache_key_stability_across_short_utterance:
-  - Build a 250-word transcript.
-  - Record hash under new method (last 200-word query_text).
-  - Append a 5-word utterance (brief therapist acknowledgment).
-  - Assert hash is UNCHANGED (200-word window did not shift for a 5-word addition).
-  → Validates that the fix produces hits for short consecutive turns.
+test_cache_hit_ttl_only_different_transcript:
+  - Build two different transcripts (second has 8 new words appended — the trigger threshold).
+  - Populate `_rag_cache[session_type]` with a fresh entry (age < 90 s) using the first transcript.
+  - Call `prefetch_rag_context()` with the second (different) transcript.
+  - Assert the cached passages are returned WITHOUT calling `_query_datastore`.
+  → Validates TTL-only invalidation: transcript content no longer affects cache hits.
 
 test_cache_hit_returns_without_querying:
   - Monkeypatch `_rag_cache` with a fresh entry (age < 90 s) and matching hash.

@@ -146,7 +146,7 @@ No analysis logic change is accepted without running this harness before and aft
 
 With I/O contracts, corpus, and measurement framework in place, implement the analysis logic:
 
-- Fix the RAG cache key (hash the last-200-word query window, not the last-500 characters of raw transcript text; extend TTL to 90 seconds)
+- Fix the RAG cache key (remove the transcript hash from the cache key entirely; extend TTL to 90 seconds — any window hashed over the tail of a growing transcript changes on every trigger; TTL-only is the correct invalidation mechanism; see `AUTOPSY_CACHE_FIX.md`)
 - Re-enable the Gemini context cache on the comprehensive path by switching from inline RAG tools to pre-fetched text injection
 - Apply safety scanner uniformly across all analysis handlers
 - Restructure prompts with transcript in primacy position; move calibration rules to immediately precede the transcript
